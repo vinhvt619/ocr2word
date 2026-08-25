@@ -1,0 +1,60 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "web": {
+      "root": "frontend/",
+      "framework": "nextjs",
+      "devCommand": "node scripts/vercel-dev.mjs",
+      "bindings": [
+        {
+          "type": "service",
+          "service": "worker",
+          "format": "url",
+          "env": "OCR2WORD_WORKER_URL"
+        }
+      ],
+      "functions": {
+        "pages/api/queue/convert.ts": {
+          "maxDuration": "max",
+          "experimentalTriggers": [
+            {
+              "type": "queue/v2beta",
+              "topic": "ocr2word-convert",
+              "retryAfterSeconds": 30,
+              "maxDeliveries": 3,
+              "maxConcurrency": 2
+            }
+          ]
+        }
+      }
+    },
+    "worker": {
+      "root": ".",
+      "runtime": "container",
+      "entrypoint": "Dockerfile.vercel",
+      "bindings": [
+        {
+          "type": "service",
+          "service": "web",
+          "format": "url",
+          "env": "OCR2WORD_CONTROL_URL"
+        }
+      ],
+      "functions": {
+        "**": { "maxDuration": "max" }
+      }
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": { "service": "web" }
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/cleanup",
+      "schedule": "17 3 * * *"
+    }
+  ]
+}
