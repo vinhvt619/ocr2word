@@ -3,16 +3,20 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Chuyển PDF, hình ảnh và Excel thành file Word có thể chỉnh sửa bằng OCR tiếng Việt và tiếng Anh." />
-    <title>OCR2Word — PDF, ảnh & Excel sang Word</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231e63e9'/%3E%3Cpath d='M10 6h8l4 4v16H10zM18 6v5h4M13 16h6M13 20h6' fill='none' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="/static/styles.css?v=2.0.0" />
-    <script src="/static/app.js?v=2.0.0" defer></script>
+    <meta name="description" content="Chuyển PDF, hình ảnh và Excel thành file Word có thể chỉnh sửa với công thức toán Equation và nhận diện bảng chuẩn xác." />
+    <title>OCR2Word — Chuyển PDF, Ảnh &amp; Excel sang Word</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Cpath d='M10 6h8l4 4v16H10zM18 6v5h4M13 16h6M13 20h6' fill='none' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/styles.css?v=2.2.0" />
+    <script src="/static/app.js?v=2.2.0" defer></script>
   </head>
   <body>
     <div class="ambient ambient-one" aria-hidden="true"></div>
     <div class="ambient ambient-two" aria-hidden="true"></div>
 
+    <!-- Top Navigation Bar -->
     <header class="topbar">
       <a class="brand" href="/" aria-label="OCR2Word - Trang chủ">
         <span class="brand-mark" aria-hidden="true">
@@ -21,79 +25,123 @@
             <path d="M19 3.5V9h5M11.5 15h9M11.5 19h9M11.5 23h6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
           </svg>
         </span>
-        <span>
+        <span class="brand-text">
           <strong>OCR2Word</strong>
-          <small>Document converter</small>
+          <small>Document &amp; Math Converter</small>
         </span>
       </a>
-      <div id="engineStatus" class="engine-status is-checking" role="status" aria-live="polite">
-        <span class="status-dot"></span>
-        <span>Đang kiểm tra OCR...</span>
+      <div class="topbar-actions">
+        <div id="engineStatus" class="engine-status is-checking" role="status" aria-live="polite">
+          <span class="status-dot"></span>
+          <span>Đang kiểm tra OCR...</span>
+        </div>
       </div>
     </header>
 
     <main>
+      <!-- Hero Header -->
       <section class="hero" aria-labelledby="heroTitle">
-        <div class="eyebrow"><span></span> OCR tiếng Việt & English</div>
-        <h1 id="heroTitle">Biến tài liệu thành nội dung<br /><em>có thể chỉnh sửa.</em></h1>
+        <div class="eyebrow">
+          <span class="eyebrow-dot"></span>
+          <span>Công nghệ OCR &amp; Nhận diện công thức toán học</span>
+        </div>
+        <h1 id="heroTitle">
+          Biến tài liệu thành nội dung<br />
+          <em>chỉnh sửa được trong Word</em>
+        </h1>
         <p>
-          Thả PDF scan, hình chụp tài liệu, PDF có lớp chữ hoặc bảng Excel. OCR2Word sẽ nhận diện nội dung,
-          giữ cấu trúc quan trọng và tạo file Word sẵn sàng để bạn chỉnh sửa.
+          Hỗ trợ PDF scan, giáo trình, đồ án kỹ thuật, ảnh chụp và bảng biểu Excel. Tự động nhận diện công thức toán dạng Equation, giữ nguyên bảng tính và cấu trúc trang gốc.
         </p>
-        <div class="hero-badges" aria-label="Tính năng chính">
-          <span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 4 4 8-9" /></svg> Xử lý nhiều file</span>
-          <span id="privacyBadge"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 16 5v4.5c0 4-2.5 6.5-6 8-3.5-1.5-6-4-6-8V5zM7.5 10l1.7 1.7 3.5-4" /></svg> Xử lý riêng tư</span>
-          <span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 3h8l4 4v10H4zM12 3v4h4M7 11h6M7 14h4" /></svg> DOCX chuẩn</span>
+        <div class="hero-badges" aria-label="Tính năng nổi bật">
+          <span class="badge-item">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 4 4 8-9" /></svg>
+            Công thức toán Word Equation
+          </span>
+          <span id="privacyBadge" class="badge-item">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 16 5v4.5c0 4-2.5 6.5-6 8-3.5-1.5-6-4-6-8V5zM7.5 10l1.7 1.7 3.5-4" /></svg>
+            100% Cục bộ &amp; Riêng tư
+          </span>
+          <span class="badge-item">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 3h8l4 4v10H4zM12 3v4h4M7 11h6M7 14h4" /></svg>
+            Bảo toàn bảng &amp; hình ảnh
+          </span>
         </div>
       </section>
 
+      <!-- Main Converter Interface -->
       <section class="converter-shell" aria-label="Công cụ chuyển đổi">
+
+        <!-- Left: Upload & Process Area -->
         <div class="converter-main">
           <div class="section-heading">
             <span class="step-number">01</span>
             <div>
               <h2>Chọn tài liệu</h2>
-              <p>PDF, ảnh hoặc Excel • tối đa 20 file mỗi lượt</p>
+              <p>Hỗ trợ PDF, ảnh hoặc Excel (tối đa 20 file mỗi lượt)</p>
             </div>
           </div>
 
           <input id="fileInput" type="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp,.xlsx,.xlsm,.xls" multiple hidden />
+
+          <!-- Dropzone -->
           <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-controls="fileInput" aria-describedby="dropHint">
             <div class="upload-visual" aria-hidden="true">
               <svg viewBox="0 0 48 48">
                 <path d="M24 31V13m0 0-7 7m7-7 7 7M11 29v7.5A3.5 3.5 0 0 0 14.5 40h19a3.5 3.5 0 0 0 3.5-3.5V29" />
               </svg>
             </div>
-            <strong>Kéo và thả file vào đây</strong>
-            <span id="dropHint">hoặc <u>chọn file từ máy tính</u></span>
-            <small>Hỗ trợ PDF scan và ảnh PNG, JPG, TIFF, BMP, WEBP</small>
+            <strong class="dropzone-title">Kéo và thả tài liệu vào đây</strong>
+            <span id="dropHint" class="dropzone-sub">hoặc nhấp chuột vào bất cứ đâu để tải lên</span>
+            <div class="dropzone-cta">
+              <span class="btn-browse-file">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" /></svg>
+                Chọn file từ máy tính
+              </span>
+            </div>
+            <div class="format-tags" aria-label="Định dạng hỗ trợ">
+              <span class="fmt-tag"><i class="fmt-dot dot-pdf"></i>PDF</span>
+              <span class="fmt-tag"><i class="fmt-dot dot-img"></i>Ảnh PNG, JPG</span>
+              <span class="fmt-tag"><i class="fmt-dot dot-img"></i>TIFF, BMP</span>
+              <span class="fmt-tag"><i class="fmt-dot dot-xls"></i>Excel XLSX</span>
+            </div>
           </div>
 
+          <!-- File Panel (When selected) -->
           <div id="filePanel" class="file-panel" hidden>
             <div class="file-panel-head">
-              <strong><span id="fileCount">0</span> tài liệu đã chọn</strong>
-              <button id="clearFiles" class="text-button" type="button">Xóa tất cả</button>
+              <strong><span id="fileCount">0</span> tài liệu đã sẵn sàng</strong>
+              <button id="clearFiles" class="text-button" type="button" title="Xóa toàn bộ file đã chọn">
+                <svg viewBox="0 0 20 20" aria-hidden="true" width="14" height="14"><path d="M6 6l8 8M14 6l-8 8"/></svg>
+                Xóa tất cả
+              </button>
             </div>
             <ul id="fileList" class="file-list" aria-live="polite"></ul>
             <button id="addMore" class="add-more" type="button">
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" /></svg>
-              Thêm tài liệu
+              Chọn thêm tài liệu
             </button>
           </div>
 
+          <!-- Inline Notice -->
           <div id="inlineNotice" class="inline-notice" hidden role="alert"></div>
 
+          <!-- Main Action Button -->
           <button id="convertButton" class="convert-button" type="button" disabled>
             <span class="button-label">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l4 4v14H7zM14 3v5h5M10 13h5M10 17h3" /></svg>
-              Chuyển sang Word
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+              <span>Bắt đầu chuyển sang Word (.docx)</span>
+              <kbd class="kbd-hint" title="Phím tắt: Ctrl + Enter">Ctrl + ↵</kbd>
             </span>
-            <span class="button-progress" aria-hidden="true"><i></i> Đang xử lý tài liệu...</span>
+            <span class="button-progress" aria-hidden="true"><i></i> Đang nhận diện và tạo file Word...</span>
           </button>
 
+          <!-- Progress Panel -->
           <div id="progressPanel" class="progress-panel" hidden aria-live="polite">
             <div class="progress-heading">
-              <strong id="progressStage">Đang chuẩn bị…</strong>
+              <div class="progress-info">
+                <span class="progress-spinner"></span>
+                <strong id="progressStage">Đang chuẩn bị…</strong>
+              </div>
               <span id="progressPercent">0%</span>
             </div>
             <div
@@ -108,116 +156,236 @@
             <p id="progressDetail">Đang chuẩn bị tài liệu.</p>
           </div>
 
+          <!-- Result Panel -->
           <div id="resultPanel" class="result-panel" hidden aria-live="polite">
             <div class="result-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></svg>
             </div>
             <div class="result-copy">
-              <strong id="resultTitle">Đã chuyển đổi xong</strong>
-              <p id="resultMessage">File Word đã được tải xuống.</p>
+              <strong id="resultTitle">Đã chuyển đổi hoàn tất</strong>
+              <p id="resultMessage">File Word đã được tạo thành công và tự động tải về.</p>
               <ul id="resultDetails"></ul>
             </div>
-            <button id="downloadAgain" class="download-again" type="button">Tải lại</button>
+            <div class="result-actions">
+              <button id="downloadAgain" class="download-again" type="button">
+                <svg viewBox="0 0 20 20" aria-hidden="true" width="16" height="16"><path d="M3 17a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4a1 1 0 1 0-2 0v3H5v-3a1 1 0 1 0-2 0v4zm7-4a1 1 0 0 0 .707-.293l4-4a1 1 0 1 0-1.414-1.414L11 9.586V3a1 1 0 1 0-2 0v6.586L6.707 7.293a1 1 0 0 0-1.414 1.414l4 4A1 1 0 0 0 10 13z"/></svg>
+                Tải lại file Word (.docx)
+              </button>
+              <button id="convertMoreBtn" class="convert-more-btn" type="button">
+                <svg viewBox="0 0 20 20" aria-hidden="true" width="16" height="16"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                Chuyển tài liệu khác
+              </button>
+            </div>
           </div>
         </div>
 
+        <!-- Right: Settings Panel -->
         <aside class="settings-panel" aria-labelledby="settingsTitle">
           <div class="section-heading compact">
             <span class="step-number">02</span>
-            <div>
-              <h2 id="settingsTitle">Tùy chọn</h2>
-              <p>Tối ưu cách nhận diện</p>
+            <div class="heading-text-wrap">
+              <div class="settings-title-row">
+                <h2 id="settingsTitle">Cấu hình chuyển đổi</h2>
+                <span id="savedIndicator" class="saved-indicator" aria-live="polite">✓ Đã lưu cài đặt</span>
+              </div>
+              <p>Tối ưu chất lượng và cách nhận diện</p>
             </div>
           </div>
 
-          <fieldset class="setting-group">
-            <legend>Chế độ PDF / ảnh</legend>
-            <label class="radio-card">
-              <input type="radio" name="ocrMode" value="auto" checked />
-              <span class="radio-mark"></span>
-              <span><strong>Tự động thông minh</strong><small>Giữ bìa/bố cục PDF hỗn hợp; OCR tài liệu scan</small></span>
-              <span class="recommended">Khuyên dùng</span>
-            </label>
-            <label class="radio-card">
-              <input id="forceOcr" type="radio" name="ocrMode" value="force" />
-              <span class="radio-mark"></span>
-              <span><strong>Ưu tiên chỉnh sửa</strong><small>OCR lại mọi trang; có thể mất nền, logo và chữ ký</small></span>
-            </label>
-            <label class="radio-card">
-              <input type="radio" name="ocrMode" value="text" />
-              <span class="radio-mark"></span>
-              <span><strong>Ưu tiên giống bản gốc</strong><small>Giữ trang scan như ảnh; chỉ lớp chữ sẵn có chỉnh sửa được</small></span>
-            </label>
-            <p class="mode-help"><strong>Lưu ý:</strong> trang scan không thể vừa giữ nguyên nền/chữ ký tuyệt đối, vừa biến toàn bộ chữ trên ảnh thành bố cục Word hoàn toàn chỉnh sửa được.</p>
-          </fieldset>
-
-          <div class="setting-row">
-            <label for="language">Ngôn ngữ OCR</label>
-            <div class="select-wrap">
-              <select id="language">
-                <option value="vie" selected>Tiếng Việt ưu tiên (khuyên dùng)</option>
-                <option value="vie+eng">Tiếng Việt + English</option>
-                <option value="eng">English</option>
-              </select>
-              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" /></svg>
+          <!-- Quick Presets Toolbar -->
+          <div class="preset-strip" role="toolbar" aria-label="Cấu hình nhanh 1 chạm">
+            <div class="preset-label">⚡ Cấu hình nhanh theo nhu cầu:</div>
+            <div class="preset-buttons">
+              <button type="button" class="preset-pill" data-preset="math" title="Tối ưu cho bài tập, giáo trình, luận văn chứa công thức toán">
+                <span class="preset-emoji">📐</span>
+                <span>Toán &amp; Đồ án</span>
+              </button>
+              <button type="button" class="preset-pill" data-preset="scan" title="Tối ưu cho tài liệu scan, sách photo, giấy in cũ">
+                <span class="preset-emoji">📄</span>
+                <span>Sách &amp; Scan</span>
+              </button>
+              <button type="button" class="preset-pill" data-preset="tables" title="Tối ưu cho báo cáo tài chính, biểu mẫu biểu đồ">
+                <span class="preset-emoji">📊</span>
+                <span>Bảng dữ liệu</span>
+              </button>
+              <button type="button" class="preset-pill preset-pill-reset" id="resetSettingsBtn" title="Khôi phục toàn bộ tùy chọn về ban đầu">
+                <span>↺ Mặc định</span>
+              </button>
             </div>
           </div>
 
-          <div class="setting-row">
-            <label for="dpi">Chất lượng nhận diện</label>
-            <div class="select-wrap">
-              <select id="dpi">
-                <option value="200">Nhanh — 200 DPI</option>
-                <option value="300" selected>Cân bằng — 300 DPI</option>
-                <option value="400">Rõ nét — 400 DPI</option>
-              </select>
-              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" /></svg>
+          <!-- Section: Định dạng xuất (Word / Excel) -->
+          <div class="setting-card">
+            <div class="setting-card-title">Định dạng file xuất</div>
+            <fieldset class="setting-group" id="outputFormatGroup">
+              <legend class="sr-only">Định dạng file xuất</legend>
+              <label class="radio-card">
+                <input id="outputDocx" type="radio" name="outputFormat" value="docx" checked />
+                <span class="radio-mark"></span>
+                <span class="radio-content">
+                  <strong>Word (.docx)</strong>
+                  <small>Văn bản, bố cục trang và công thức toán</small>
+                </span>
+                <span class="recommended-badge">Mặc định</span>
+              </label>
+              <label class="radio-card">
+                <input id="outputXlsx" type="radio" name="outputFormat" value="xlsx" />
+                <span class="radio-mark"></span>
+                <span class="radio-content">
+                  <strong>Excel (.xlsx)</strong>
+                  <small>Trích xuất bảng tính trực tiếp từ PDF / ảnh vào các sheet riêng biệt</small>
+                </span>
+              </label>
+            </fieldset>
+            <div id="excelModeNotice" class="setting-note" style="margin-top: 8px; font-size: 0.85rem; color: #4b5563;" hidden>
+              ℹ️ <em>Chế độ Excel trích xuất bảng và văn bản trực tiếp. Các tính năng bố cục và công thức dành cho Word sẽ tự động tắt.</em>
             </div>
           </div>
 
-          <div class="switch-list">
-            <label class="switch-row">
-              <span><strong>Giữ bố cục PDF</strong><small>Giữ bìa, mục lục và vị trí nội dung khi nguồn cho phép</small></span>
-              <input id="preserveLayout" type="checkbox" checked />
-              <span class="switch" aria-hidden="true"></span>
-            </label>
-            <label class="switch-row">
-              <span><strong>Giữ hình ảnh</strong><small>Giữ logo, hình minh họa và trang scan ở chế độ bố cục</small></span>
-              <input id="preserveImages" type="checkbox" checked />
-              <span class="switch" aria-hidden="true"></span>
-            </label>
-            <label class="switch-row">
-              <span><strong>Nhận diện bảng</strong><small>Chỉ áp dụng cho những trang thực sự được OCR</small></span>
-              <input id="detectTables" type="checkbox" checked />
-              <span class="switch" aria-hidden="true"></span>
-            </label>
-            <label class="switch-row">
-              <span><strong>Ngắt trang</strong><small>Giữ ranh giới trang/sheet</small></span>
-              <input id="pageBreaks" type="checkbox" checked />
-              <span class="switch" aria-hidden="true"></span>
-            </label>
-            <label class="switch-row ai-switch-row">
-              <span><strong>Hỗ trợ với AI miễn phí</strong><small id="aiSwitchDescription">Sửa dấu và từ bị dính/tách sau OCR</small></span>
-              <input id="aiAssist" type="checkbox" />
-              <span class="switch" aria-hidden="true"></span>
-            </label>
+          <!-- Section: Chế độ nhận diện -->
+          <div class="setting-card">
+            <div class="setting-card-title">Chế độ nhận diện PDF / Ảnh</div>
+            <fieldset class="setting-group">
+              <legend class="sr-only">Chế độ PDF / ảnh</legend>
+              <label class="radio-card">
+                <input type="radio" name="ocrMode" value="auto" checked />
+                <span class="radio-mark"></span>
+                <span class="radio-content">
+                  <strong>Tự động thông minh</strong>
+                  <small>Giữ chuẩn bìa/bố cục PDF số; tự nhận dạng trang scan</small>
+                </span>
+                <span class="recommended-badge">Khuyên dùng</span>
+              </label>
+              <label class="radio-card">
+                <input id="forceOcr" type="radio" name="ocrMode" value="force" />
+                <span class="radio-mark"></span>
+                <span class="radio-content">
+                  <strong>Ưu tiên chỉnh sửa</strong>
+                  <small>OCR lại toàn bộ mọi trang chữ; có thể bỏ bớt màu nền</small>
+                </span>
+              </label>
+              <label class="radio-card">
+                <input type="radio" name="ocrMode" value="text" />
+                <span class="radio-mark"></span>
+                <span class="radio-content">
+                  <strong>Ưu tiên nguyên bản</strong>
+                  <small>Giữ trang scan như ảnh; chỉ sửa được lớp chữ sẵn có</small>
+                </span>
+              </label>
+            </fieldset>
           </div>
 
-          <div id="aiConfig" class="ai-config" hidden>
-            <div class="ai-config-head">
-              <span><strong id="aiProviderTitle">AI hiệu đính OCR</strong><small id="aiProviderDescription">Đang nhận diện môi trường chạy</small></span>
-              <span id="aiModelBadge" class="ai-model-badge">Đang kiểm tra…</span>
+          <!-- Section: Ngôn ngữ & DPI -->
+          <div class="setting-card">
+            <div class="setting-grid-2">
+              <div class="setting-row">
+                <label for="language">Ngôn ngữ tài liệu</label>
+                <div class="select-wrap">
+                  <select id="language">
+                    <option value="vie" selected>Tiếng Việt (Khuyên dùng)</option>
+                    <option value="vie+eng">Tiếng Việt + Tiếng Anh</option>
+                    <option value="eng">Tiếng Anh</option>
+                  </select>
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" /></svg>
+                </div>
+              </div>
+
+              <div class="setting-row">
+                <label for="dpi">Độ sắc nét OCR</label>
+                <div class="select-wrap">
+                  <select id="dpi">
+                    <option value="200">Nhanh — 200 DPI</option>
+                    <option value="300" selected>Cân bằng — 300 DPI</option>
+                    <option value="400">Rõ nét — 400 DPI</option>
+                  </select>
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" /></svg>
+                </div>
+              </div>
             </div>
-            <p id="aiInfo">Đang kiểm tra Google Gemini…</p>
-            <div id="aiSetupHint" class="ai-setup" hidden>
-              <span id="aiSetupCopy">Tạo API key miễn phí rồi cấu hình một lần:</span>
-              <code id="aiSetupCommand">.\setup-gemini.ps1</code>
-            </div>
-            <small id="aiPrivacy" class="ai-privacy">
-              Chỉ phần chữ OCR được gửi tới Google Gemini khi bạn bật tùy chọn này.
-            </small>
           </div>
 
+          <!-- Section: Nhận diện công thức toán học (Featured Feature) -->
+          <div class="setting-card math-card-featured">
+            <label class="switch-row math-switch-row">
+              <div class="switch-info">
+                <div class="switch-header">
+                  <strong>Nhận diện công thức toán học</strong>
+                  <span class="feature-tag">Equation Word</span>
+                </div>
+                <small>Biến công thức PDF/ảnh thành công thức Word chỉnh sửa được</small>
+              </div>
+              <input id="mathOcr" type="checkbox" aria-describedby="mathOcrHelp" />
+              <span class="switch" aria-hidden="true"></span>
+            </label>
+
+            <div id="mathEngineRow" class="setting-row math-engine-row" hidden>
+              <label for="mathEngine">Bộ máy nhận diện công thức</label>
+              <div class="select-wrap">
+                <select id="mathEngine">
+                  <option value="local_hybrid" selected>Cục bộ (khuyên dùng cho bản scan và ảnh)</option>
+                  <option value="rules">Chỉ theo quy tắc PDF số (Rất nhanh, không tải model)</option>
+                </select>
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" /></svg>
+              </div>
+            </div>
+            <p id="mathOcrHelp" class="mode-help">
+              Kết hợp phân tích cấu trúc PDF với nhận diện công thức cục bộ. Công thức được tạo thành đối tượng Office Math (OMML) chuẩn để bạn sửa tử số, mẫu số, số mũ tự nhiên trong Microsoft Word.
+            </p>
+          </div>
+
+          <!-- Section: Tùy chọn bố cục nâng cao (Collapsible Accordion) -->
+          <details id="advancedDetails" class="setting-card advanced-accordion" open>
+            <summary class="advanced-summary">
+              <div class="summary-left">
+                <svg viewBox="0 0 20 20" aria-hidden="true" width="18" height="18"><path d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z"/></svg>
+                <div class="summary-title-group">
+                  <strong>Tùy chọn bố cục &amp; định dạng nâng cao</strong>
+                  <span id="advancedActiveCount" class="advanced-badge">4/4 đang bật</span>
+                </div>
+              </div>
+              <svg class="chevron-icon" viewBox="0 0 20 20" aria-hidden="true" width="16" height="16"><path d="m6 8 4 4 4-4" /></svg>
+            </summary>
+
+            <div class="switch-list">
+              <label class="switch-row">
+                <div class="switch-info">
+                  <strong>Giữ bố cục PDF</strong>
+                  <small>Giữ trang bìa, mục lục và vị trí nội dung tương ứng PDF gốc</small>
+                </div>
+                <input id="preserveLayout" type="checkbox" checked />
+                <span class="switch" aria-hidden="true"></span>
+              </label>
+
+              <label class="switch-row">
+                <div class="switch-info">
+                  <strong>Giữ hình ảnh</strong>
+                  <small>Bảo toàn logo, sơ đồ máy móc, biểu đồ và ảnh chụp</small>
+                </div>
+                <input id="preserveImages" type="checkbox" checked />
+                <span class="switch" aria-hidden="true"></span>
+              </label>
+
+              <label class="switch-row">
+                <div class="switch-info">
+                  <strong>Nhận diện bảng</strong>
+                  <small>Tự động phát hiện đường lưới để tạo thành bảng Word Table có ô tính</small>
+                </div>
+                <input id="detectTables" type="checkbox" checked />
+                <span class="switch" aria-hidden="true"></span>
+              </label>
+
+              <label class="switch-row">
+                <div class="switch-info">
+                  <strong>Ngắt trang</strong>
+                  <small>Bảo toàn ranh giới trang: mỗi trang PDF khớp đúng 1 trang Word</small>
+                </div>
+                <input id="pageBreaks" type="checkbox" checked />
+                <span class="switch" aria-hidden="true"></span>
+              </label>
+            </div>
+          </details>
+
+          <!-- OCR Engine Status Footer -->
           <div id="ocrInfo" class="ocr-info">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Zm0-14v5m0 4h.01" /></svg>
             <p>Đang kiểm tra bộ máy OCR...</p>
@@ -225,36 +393,44 @@
         </aside>
       </section>
 
+      <!-- Workflow Section -->
       <section class="workflow" aria-labelledby="workflowTitle">
         <div class="workflow-title">
-          <span>Cách hoạt động</span>
-          <h2 id="workflowTitle">Từ tài liệu gốc đến Word trong ba bước</h2>
+          <span>Quy trình xử lý</span>
+          <h2 id="workflowTitle">Chuyển đổi tài liệu qua 3 bước</h2>
         </div>
         <div class="workflow-grid">
           <article>
-            <span class="workflow-icon"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M6 3h11l5 5v17H6zM17 3v6h5M10 14h8M10 18h8" /></svg></span>
+            <span class="workflow-icon">
+              <svg viewBox="0 0 28 28" aria-hidden="true"><path d="M6 3h11l5 5v17H6zM17 3v6h5M10 14h8M10 18h8" /></svg>
+            </span>
             <b>01</b>
-            <h3>Đọc cấu trúc</h3>
-            <p>Phân tích lớp chữ, trang scan, ảnh tài liệu, bảng và từng sheet Excel.</p>
+            <h3>Phân tích đa tầng</h3>
+            <p>Tách lớp văn bản kỹ thuật số, nhận diện vùng ảnh scan, định vị công thức toán và bảng biểu.</p>
           </article>
           <article>
-            <span class="workflow-icon"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M4 8V4h4M20 4h4v4M24 20v4h-4M8 24H4v-4M8 14h12M8 10h7M8 18h9" /></svg></span>
+            <span class="workflow-icon">
+              <svg viewBox="0 0 28 28" aria-hidden="true"><path d="M4 8V4h4M20 4h4v4M24 20v4h-4M8 24H4v-4M8 14h12M8 10h7M8 18h9" /></svg>
+            </span>
             <b>02</b>
-            <h3>Nhận dạng OCR</h3>
-            <p>Trang scan và hình ảnh được nhận dạng; AI tùy chọn có thể hiệu đính lỗi chữ sau OCR.</p>
+            <h3>Nhận dạng Toán &amp; OCR</h3>
+            <p>Tesseract nhận diện chữ. Công thức đã nhận diện được xuất dưới dạng Equation trong Word.</p>
           </article>
           <article>
-            <span class="workflow-icon"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M6 3h11l5 5v17H6zM17 3v6h5M10 14h8M10 18h8M10 22h5" /></svg></span>
+            <span class="workflow-icon">
+              <svg viewBox="0 0 28 28" aria-hidden="true"><path d="M6 3h11l5 5v17H6zM17 3v6h5M10 14h8M10 18h8M10 22h5" /></svg>
+            </span>
             <b>03</b>
-            <h3>Tạo Word</h3>
-            <p>Xuất DOCX với đoạn văn và bảng thật, sẵn sàng chỉnh sửa trong Word.</p>
+            <h3>Tạo Word (.docx)</h3>
+            <p>Đóng gói thành file Word chuẩn với công thức toán Equation, bảng có thể chỉnh sửa và căn lề trang chuẩn xác.</p>
           </article>
         </div>
       </section>
     </main>
 
+    <!-- Footer -->
     <footer>
-      <p id="privacyFooter"><strong>OCR2Word</strong> • Chỉ bật AI khi bạn muốn hiệu đính thêm nội dung OCR.</p>
+      <p id="privacyFooter"><strong>OCR2Word</strong> • OCR tài liệu tiếng Việt và tiếng Anh.</p>
       <span>PDF • Ảnh • Excel • Word</span>
     </footer>
   </body>

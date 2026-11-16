@@ -342,7 +342,14 @@ def convert_excel(input_path: Path, output_path: Path, options: ConversionOption
     options.validate()
     suffix = input_path.suffix.lower()
     if suffix == ".xls":
-        return _convert_xls(input_path, output_path, options)
-    if suffix in {".xlsx", ".xlsm"}:
-        return _convert_xlsx(input_path, output_path, options)
-    raise ConversionError(f"Định dạng Excel không được hỗ trợ: {suffix}")
+        result = _convert_xls(input_path, output_path, options)
+    elif suffix in {".xlsx", ".xlsm"}:
+        result = _convert_xlsx(input_path, output_path, options)
+    else:
+        raise ConversionError(f"Định dạng Excel không được hỗ trợ: {suffix}")
+    if options.math_ocr:
+        result.warnings.append(
+            "Tùy chọn nhận diện công thức toán chỉ áp dụng cho PDF và hình ảnh; "
+            "file Excel được chuyển đổi bằng bộ chuyển đổi bảng tính thông thường."
+        )
+    return result

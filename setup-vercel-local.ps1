@@ -106,8 +106,6 @@ $keys = Read-EnvKeys -Path $envFile
 $missing = New-Object 'System.Collections.Generic.List[string]'
 foreach ($key in @(
     "OCR2WORD_INTERNAL_SECRET",
-    "GEMINI_API_KEY",
-    "OCR2WORD_AI_MODEL",
     "OCR2WORD_QUEUE_REGION",
     "VERCEL_OIDC_TOKEN"
 )) {
@@ -126,7 +124,7 @@ if (-not $hasBlobToken -and -not $hasBlobOidc) {
 
 if ($missing.Count -gt 0) {
     $names = $missing -join ", "
-    throw "Development environment is incomplete: $names. Connect Private Blob and Upstash Redis, then run .\\setup-gemini.ps1."
+    throw "Development environment is incomplete: $names. Connect Private Blob and Upstash Redis."
 }
 
 if (Test-Path -LiteralPath $projectLink) {

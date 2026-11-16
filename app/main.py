@@ -37,12 +37,7 @@ from app.converters import (
     convert_pdf,
     extract_pdf_pages,
 )
-from app.services.ai_assist import (
-    AiAssistError,
-    apply_ai_assistance_to_docx,
-    get_ai_engine_info,
-    resolve_ai_model,
-)
+from app.converters.math_pipeline import get_math_engines_status
 from app.services.ocr import get_ocr_engine_info
 from app.services.docx_merge import merge_docx_parts
 from app.services.progress import ProgressRegistry
@@ -116,6 +111,7 @@ class _VercelInputFile(BaseModel):
 class _VercelConversionOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    output_format: str = Field(default="docx", pattern=r"^(docx|xlsx)$")
     language: str = Field(default="vie", min_length=2, max_length=80, pattern=r"^[A-Za-z0-9_+.-]+$")
     ocr_mode: str = Field(default="auto", pattern=r"^(auto|force|text)$")
     dpi: int = Field(default=300, ge=150, le=600)
@@ -123,7 +119,8 @@ class _VercelConversionOptions(BaseModel):
     preserve_images: bool = True
     preserve_layout: bool = True
     detect_tables: bool = True
-    ai_assist: bool = False
+    math_ocr: bool = False
+    math_engine: str | None = Field(default=None, pattern=r"^(rules|local_hybrid)$")
 
 
 class _VercelOutput(BaseModel):
@@ -167,14 +164,6 @@ class _VercelMergeJob(BaseModel):
 
     job_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     parts: list[_VercelInputFile] = Field(min_length=1, max_length=200)
-    output: _VercelOutput
-
-
-class _VercelAiJob(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    job_id: str = Field(pattern=r"^[a-f0-9]{32}$")
-    file: _VercelInputFile
     output: _VercelOutput
 
 
@@ -242,6 +231,9 @@ def _encode_warnings(payload: list[dict[str, object]]) -> str:
 
 
 def _convert_one(input_path: Path, output_path: Path, options: ConversionOptions):
+    if options.output_format == "xlsx":
+        from .converters import convert_to_excel
+        return convert_to_excel(input_path, output_path, options)
     suffix = input_path.suffix.lower()
     if suffix in PDF_EXTENSIONS:
         return convert_pdf(input_path, output_path, options)
@@ -392,9 +384,66 @@ def _package_worker_results(
     return zip_path
 
 
-def _run_vercel_conversion(payload: _VercelConversionJob) -> dict[str, object]:
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+ZIP_MIME = "application/zip"
+
+
+def _validate_worker_output_contract(payload: _VercelConversionJob) -> None:
+    if not payload.files:
+        raise ConversionError("Hãy chọn ít nhất một file.")
     if sum(item.size for item in payload.files) > MAX_TOTAL_BYTES:
         raise ConversionError("Tổng dung lượng file vượt giới hạn 300 MB.")
+
+    fmt = (getattr(payload.options, "output_format", None) or "docx").lower()
+    if fmt not in ("docx", "xlsx"):
+        raise ConversionError(f"Định dạng xuất '{fmt}' không được hỗ trợ.")
+
+    file_count = len(payload.files)
+    out_ext = Path(payload.output.name).suffix.lower()
+    ct = payload.output.content_type.strip().lower()
+
+    if file_count > 1:
+        if out_ext != ".zip":
+            raise ConversionError(
+                f"Xử lý nhiều file ({file_count} files) yêu cầu tên file kết quả có đuôi '.zip', nhưng nhận được '{out_ext}' ({payload.output.name})."
+            )
+        if ct != ZIP_MIME:
+            raise ConversionError(
+                f"Xử lý nhiều file ({file_count} files) yêu cầu Content-Type '{ZIP_MIME}', nhưng nhận được '{payload.output.content_type}'."
+            )
+    else:
+        if fmt == "xlsx":
+            expected_ext = ".xlsx"
+            expected_mime = XLSX_MIME
+        else:
+            expected_ext = ".docx"
+            expected_mime = DOCX_MIME
+
+        if out_ext != expected_ext:
+            raise ConversionError(
+                f"Định dạng xuất '{fmt}' yêu cầu tên file kết quả có đuôi '{expected_ext}', nhưng nhận được '{out_ext}' ({payload.output.name})."
+            )
+        if ct != expected_mime:
+            raise ConversionError(
+                f"Định dạng xuất '{fmt}' yêu cầu Content-Type '{expected_mime}', nhưng nhận được '{payload.output.content_type}'."
+            )
+
+    # Incompatible options for XLSX
+    if fmt == "xlsx":
+        if payload.options.math_ocr:
+            raise ConversionError("Chuyển đổi sang Excel (.xlsx) không hỗ trợ tính năng nhận diện công thức toán.")
+        if payload.page_range is not None:
+            raise ConversionError("Chuyển đổi sang Excel (.xlsx) không hỗ trợ chia nhỏ trang.")
+
+    # Page range constraints
+    if payload.page_range is not None:
+        if file_count != 1:
+            raise ConversionError("Chỉ có thể chia trang khi xử lý đúng một file PDF.")
+
+
+def _run_vercel_conversion(payload: _VercelConversionJob) -> dict[str, object]:
+    _validate_worker_output_contract(payload)
     reporter = _VercelProgressReporter(payload.job_id, enabled=payload.notify_progress)
     work_dir = Path(tempfile.mkdtemp(prefix="ocr2word-vercel-"))
     input_dir = work_dir / "input"
@@ -424,10 +473,10 @@ def _run_vercel_conversion(payload: _VercelConversionJob) -> dict[str, object]:
             saved_inputs.append((input_path, source.name))
 
         if payload.page_range is not None:
+            if payload.options.output_format == "xlsx":
+                raise ConversionError("Chuyển đổi sang Excel (.xlsx) không hỗ trợ chia nhỏ trang.")
             if len(saved_inputs) != 1 or saved_inputs[0][0].suffix.lower() != ".pdf":
                 raise ConversionError("Chỉ có thể chia trang khi xử lý đúng một file PDF.")
-            if payload.options.ai_assist:
-                raise ConversionError("AI phải chạy sau khi đã ghép xong các phần Word.")
             source_path, original_name = saved_inputs[0]
             subset_path = input_dir / (
                 f"chunk-{payload.page_range.start_page:04d}-{payload.page_range.end_page:04d}.pdf"
@@ -441,7 +490,17 @@ def _run_vercel_conversion(payload: _VercelConversionJob) -> dict[str, object]:
             saved_inputs = [(subset_path, original_name)]
 
         option_data = payload.options
+        if option_data.output_format == "xlsx":
+            if option_data.math_ocr:
+                raise ConversionError("Chuyển đổi sang Excel (.xlsx) không hỗ trợ tính năng nhận diện công thức toán.")
+            for input_path, original_name in saved_inputs:
+                if input_path.suffix.lower() in EXCEL_EXTENSIONS:
+                    raise ConversionError(
+                        "Chuyển đổi sang Excel (.xlsx) chỉ nhận file PDF hoặc hình ảnh (không nhận file Excel làm đầu vào)."
+                    )
+
         options = ConversionOptions(
+            output_format=option_data.output_format,
             language=option_data.language,
             ocr_mode=option_data.ocr_mode,
             dpi=option_data.dpi,
@@ -449,28 +508,20 @@ def _run_vercel_conversion(payload: _VercelConversionJob) -> dict[str, object]:
             preserve_images=option_data.preserve_images,
             preserve_layout=option_data.preserve_layout,
             detect_tables=option_data.detect_tables,
+            math_ocr=option_data.math_ocr,
+            math_engine=option_data.math_engine,
         )
         options.validate()
-        ai_model: str | None = None
-        ai_unavailable_warning: str | None = None
-        if option_data.ai_assist:
-            ai_model = resolve_ai_model()
-            ai_engine = get_ai_engine_info()
-            if not ai_engine.available:
-                ai_model = None
-                ai_unavailable_warning = (
-                    f"Không thể dùng AI ở lần này ({ai_engine.message}); "
-                    "đã trả lại bản Word OCR chưa hiệu đính."
-                )
-
         successes: list[tuple[Path, str]] = []
         report: list[dict[str, object]] = []
         used_output_names: set[str] = set()
         for file_index, (input_path, original_name) in enumerate(saved_inputs):
-            output_suffix = "-editable-ai.docx" if option_data.ai_assist else "-editable.docx"
+            if option_data.output_format == "xlsx":
+                output_suffix = "-editable.xlsx"
+            else:
+                output_suffix = "-editable.docx"
             output_name = _unique_name(f"{_safe_stem(original_name)}{output_suffix}", used_output_names)
             output_path = output_dir / output_name
-            conversion_share = 0.78 if ai_model else 1.0
 
             def file_progress(file_fraction: float, message: str) -> None:
                 overall = 31 + ((file_index + file_fraction) / len(saved_inputs)) * 61
@@ -482,7 +533,7 @@ def _run_vercel_conversion(payload: _VercelConversionJob) -> dict[str, object]:
                 )
 
             def converter_progress(local_percent: int, message: str) -> None:
-                file_progress((local_percent / 100) * conversion_share, message)
+                file_progress(local_percent / 100, message)
 
             try:
                 result = _convert_one(
@@ -490,38 +541,6 @@ def _run_vercel_conversion(payload: _VercelConversionJob) -> dict[str, object]:
                     output_path,
                     replace(options, progress_callback=converter_progress),
                 )
-                ai_summary: dict[str, object] | None = None
-                if option_data.ai_assist and ai_model:
-                    def ai_progress(local_percent: int, message: str) -> None:
-                        file_progress(
-                            conversion_share + (local_percent / 100) * (1 - conversion_share),
-                            message,
-                        )
-
-                    try:
-                        ai_result = apply_ai_assistance_to_docx(
-                            result.output_path,
-                            model=ai_model,
-                            progress_callback=ai_progress,
-                        )
-                        ai_summary = ai_result.to_dict()
-                        result.warnings.append(
-                            f"AI đã kiểm tra {ai_result.processed_paragraphs} đoạn và sửa {ai_result.changed_paragraphs} đoạn chữ."
-                        )
-                        if ai_result.rejected_changes:
-                            result.warnings.append(
-                                f"Đã giữ nguyên {ai_result.rejected_changes} đề xuất AI vì thay đổi quá nhiều hoặc làm khác số liệu."
-                            )
-                        if ai_result.skipped_paragraphs:
-                            result.warnings.append(
-                                f"AI đã bỏ qua {ai_result.skipped_paragraphs} đoạn quá dài hoặc vượt giới hạn an toàn."
-                            )
-                    except AiAssistError as exc:
-                        result.warnings.append(
-                            f"AI tạm thời không hiệu đính được ({exc}); đã giữ nguyên bản Word OCR."
-                        )
-                elif ai_unavailable_warning:
-                    result.warnings.append(ai_unavailable_warning)
                 successes.append((result.output_path, output_name))
                 report.append(
                     {
@@ -532,10 +551,10 @@ def _run_vercel_conversion(payload: _VercelConversionJob) -> dict[str, object]:
                         "pages": result.page_count,
                         "sheets": result.sheet_count,
                         "tables": result.table_count,
-                        "ai": ai_summary,
+                        "math": result.math_report(),
                     }
                 )
-            except (ConversionError, AiAssistError) as exc:
+            except ConversionError as exc:
                 report.append({"file": original_name, "status": "error", "message": str(exc)})
             except Exception as exc:
                 LOGGER.exception("Unexpected Vercel conversion failure for %s", original_name)
@@ -556,7 +575,8 @@ def _run_vercel_conversion(payload: _VercelConversionJob) -> dict[str, object]:
 
         if not successes:
             raise ConversionError("\n".join(str(item.get("message", "Không thể chuyển đổi.")) for item in report))
-        reporter.update(95, "Đang đóng gói kết quả Word…", status="packaging", force=True)
+        packaging_message = "Đang đóng gói kết quả Excel…" if option_data.output_format == "xlsx" else "Đang đóng gói kết quả Word…"
+        reporter.update(95, packaging_message, status="packaging", force=True)
         result_path = _package_worker_results(successes, report, work_dir)
         reporter.update(98, "Đang lưu kết quả vào Vercel Blob…", status="packaging", force=True)
         _upload_vercel_result(result_path, payload.output)
@@ -571,6 +591,7 @@ def _run_vercel_conversion(payload: _VercelConversionJob) -> dict[str, object]:
 
 def _conversion_options(option_data: _VercelConversionOptions) -> ConversionOptions:
     options = ConversionOptions(
+        output_format=option_data.output_format,
         language=option_data.language,
         ocr_mode=option_data.ocr_mode,
         dpi=option_data.dpi,
@@ -578,6 +599,8 @@ def _conversion_options(option_data: _VercelConversionOptions) -> ConversionOpti
         preserve_images=option_data.preserve_images,
         preserve_layout=option_data.preserve_layout,
         detect_tables=option_data.detect_tables,
+        math_ocr=option_data.math_ocr,
+        math_engine=option_data.math_engine,
     )
     options.validate()
     return options
@@ -649,56 +672,6 @@ def _run_vercel_merge(payload: _VercelMergeJob) -> dict[str, object]:
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
-def _run_vercel_ai(payload: _VercelAiJob) -> dict[str, object]:
-    work_dir = Path(tempfile.mkdtemp(prefix="ocr2word-ai-"))
-    input_path = work_dir / "input.docx"
-    try:
-        _download_vercel_input(
-            payload.file,
-            input_path,
-            total_written_before=0,
-            reporter=_VercelProgressReporter(payload.job_id, enabled=False),
-            file_index=0,
-            total_files=1,
-        )
-        _validate_docx(input_path)
-        warnings: list[str] = []
-        ai_summary: dict[str, object] | None = None
-        fallback = False
-        engine = get_ai_engine_info()
-        if not engine.available:
-            fallback = True
-            warnings.append(
-                f"Không thể dùng AI ở lần này ({engine.message}); đã giữ nguyên bản Word OCR."
-            )
-        else:
-            try:
-                ai_result = apply_ai_assistance_to_docx(
-                    input_path,
-                    model=resolve_ai_model(),
-                )
-                ai_summary = ai_result.to_dict()
-                warnings.append(
-                    f"AI đã kiểm tra {ai_result.processed_paragraphs} đoạn và sửa "
-                    f"{ai_result.changed_paragraphs} đoạn chữ."
-                )
-            except AiAssistError as exc:
-                fallback = True
-                warnings.append(
-                    f"AI tạm thời không hiệu đính được ({exc}); đã giữ nguyên bản Word OCR."
-                )
-        _upload_vercel_result(input_path, payload.output)
-        return {
-            "output_name": payload.output.name,
-            "output_size": input_path.stat().st_size,
-            "ai": ai_summary,
-            "warnings": warnings,
-            "fallback": fallback,
-        }
-    finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
-
-
 @app.get("/", include_in_schema=False)
 async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html", media_type="text/html; charset=utf-8")
@@ -707,12 +680,11 @@ async def index() -> FileResponse:
 @app.get("/api/status")
 async def status() -> dict[str, object]:
     ocr = get_ocr_engine_info()
-    ai = get_ai_engine_info()
     return {
         "app": "OCR2Word",
         "version": __version__,
         "ocr": ocr.to_dict(),
-        "ai": ai.to_dict(),
+        "math_ocr": get_math_engines_status(),
         "formats": sorted(ALLOWED_EXTENSIONS),
         "limits": {
             "max_files": MAX_FILES,
@@ -737,7 +709,7 @@ async def vercel_internal_convert(
     _authorize_internal_request(authorization)
     try:
         return await run_in_threadpool(_run_vercel_conversion, payload)
-    except (ConversionError, AiAssistError) as exc:
+    except ConversionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except HTTPException:
         raise
@@ -776,21 +748,6 @@ async def vercel_internal_merge_docx(
         raise HTTPException(status_code=500, detail="Container OCR không thể ghép các phần Word.") from exc
 
 
-@app.post("/internal/ai-assist", include_in_schema=False)
-async def vercel_internal_ai_assist(
-    payload: _VercelAiJob,
-    authorization: Annotated[str | None, Header()] = None,
-) -> dict[str, object]:
-    _authorize_internal_request(authorization)
-    try:
-        return await run_in_threadpool(_run_vercel_ai, payload)
-    except ConversionError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        LOGGER.exception("Vercel AI stage failed for job %s", payload.job_id)
-        raise HTTPException(status_code=500, detail="Container OCR không thể chạy bước AI.") from exc
-
-
 @app.get("/api/progress/{job_id}")
 async def conversion_progress(job_id: str) -> dict[str, object]:
     if not JOB_ID_PATTERN.fullmatch(job_id):
@@ -804,6 +761,7 @@ async def conversion_progress(job_id: str) -> dict[str, object]:
 @app.post("/api/convert")
 async def convert(
     files: Annotated[list[UploadFile], File(description="PDF, hình ảnh hoặc Excel cần chuyển đổi")],
+    output_format: Annotated[str, Form()] = "docx",
     language: Annotated[str, Form()] = "vie",
     ocr_mode: Annotated[str, Form()] = "auto",
     dpi: Annotated[int, Form()] = 300,
@@ -811,7 +769,8 @@ async def convert(
     preserve_images: Annotated[bool, Form()] = True,
     preserve_layout: Annotated[bool, Form()] = True,
     detect_tables: Annotated[bool, Form()] = True,
-    ai_assist: Annotated[bool, Form()] = False,
+    math_ocr: Annotated[bool, Form()] = False,
+    math_engine: Annotated[str | None, Form()] = None,
     job_id: Annotated[str | None, Form()] = None,
 ) -> FileResponse:
     if not files:
@@ -822,7 +781,15 @@ async def convert(
     if job_id and not JOB_ID_PATTERN.fullmatch(job_id):
         raise HTTPException(status_code=400, detail="Mã theo dõi tiến độ không hợp lệ.")
 
+    if output_format not in {"docx", "xlsx"}:
+        raise HTTPException(status_code=400, detail="Định dạng xuất không hợp lệ (chỉ hỗ trợ docx hoặc xlsx).")
+    if output_format == "xlsx":
+        if math_ocr:
+            raise HTTPException(status_code=400, detail="Chuyển đổi sang Excel (.xlsx) không hỗ trợ tính năng nhận diện công thức toán.")
+
+    normalized_math_engine = math_engine.strip() if math_engine and math_engine.strip() else None
     options = ConversionOptions(
+        output_format=output_format,
         language=language,
         ocr_mode=ocr_mode,
         dpi=dpi,
@@ -830,23 +797,13 @@ async def convert(
         preserve_images=preserve_images,
         preserve_layout=preserve_layout,
         detect_tables=detect_tables,
+        math_ocr=math_ocr,
+        math_engine=normalized_math_engine,
     )
     try:
         options.validate()
     except ConversionError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    ai_model: str | None = None
-    ai_unavailable_warning: str | None = None
-    if ai_assist:
-        ai_model = resolve_ai_model()
-        ai_engine = get_ai_engine_info()
-        if not ai_engine.available:
-            ai_model = None
-            ai_unavailable_warning = (
-                f"Không thể dùng AI ở lần này ({ai_engine.message}); "
-                "đã trả lại bản Word OCR chưa hiệu đính."
-            )
 
     if job_id:
         PROGRESS.start(job_id, total_files=len(files))
@@ -867,6 +824,11 @@ async def convert(
         for upload_index, upload in enumerate(files):
             original_name = upload.filename or "tai-lieu"
             suffix = Path(original_name).suffix.lower()
+            if output_format == "xlsx" and suffix in EXCEL_EXTENSIONS:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Chuyển đổi sang Excel (.xlsx) chỉ nhận file PDF hoặc hình ảnh (không nhận file Excel làm đầu vào).",
+                )
             if suffix not in ALLOWED_EXTENSIONS:
                 raise ConversionError(
                     f"'{original_name}' không được hỗ trợ. Chỉ nhận PDF, hình ảnh PNG/JPG/TIFF/BMP/WEBP và Excel."
@@ -909,10 +871,12 @@ async def convert(
         report: list[dict[str, object]] = []
         PROGRESS.update(job_id, status="converting", percent=15, message="Bắt đầu chuyển đổi tài liệu…")
         for file_index, (input_path, original_name) in enumerate(saved_inputs):
-            output_suffix = "-editable-ai.docx" if ai_assist else "-editable.docx"
+            if output_format == "xlsx":
+                output_suffix = "-editable.xlsx"
+            else:
+                output_suffix = "-editable.docx"
             output_name = _unique_name(f"{_safe_stem(original_name)}{output_suffix}", used_output_names)
             output_path = output_dir / output_name
-            conversion_share = 0.78 if ai_model else 1.0
 
             def file_progress(
                 file_fraction: float,
@@ -932,45 +896,12 @@ async def convert(
                 )
 
             def converter_progress(local_percent: int, message: str) -> None:
-                file_progress((local_percent / 100) * conversion_share, message)
+                file_progress(local_percent / 100, message)
 
             file_options = replace(options, progress_callback=converter_progress)
             converter_progress(0, f"Đang chuyển đổi file {file_index + 1}/{len(saved_inputs)}…")
             try:
                 result = await run_in_threadpool(_convert_one, input_path, output_path, file_options)
-                ai_summary: dict[str, object] | None = None
-                if ai_assist and ai_model:
-                    def ai_progress(local_percent: int, message: str) -> None:
-                        file_fraction = conversion_share + (
-                            (local_percent / 100) * (1 - conversion_share)
-                        )
-                        file_progress(file_fraction, message)
-
-                    try:
-                        ai_result = await run_in_threadpool(
-                            apply_ai_assistance_to_docx,
-                            result.output_path,
-                            model=ai_model,
-                            progress_callback=ai_progress,
-                        )
-                        ai_summary = ai_result.to_dict()
-                        result.warnings.append(
-                            f"AI đã kiểm tra {ai_result.processed_paragraphs} đoạn và sửa {ai_result.changed_paragraphs} đoạn chữ."
-                        )
-                        if ai_result.rejected_changes:
-                            result.warnings.append(
-                                f"Đã giữ nguyên {ai_result.rejected_changes} đề xuất AI vì thay đổi quá nhiều hoặc làm khác số liệu."
-                            )
-                        if ai_result.skipped_paragraphs:
-                            result.warnings.append(
-                                f"AI đã bỏ qua {ai_result.skipped_paragraphs} đoạn quá dài hoặc vượt giới hạn an toàn."
-                            )
-                    except AiAssistError as exc:
-                        result.warnings.append(
-                            f"AI tạm thời không hiệu đính được ({exc}); đã giữ nguyên bản Word OCR."
-                        )
-                elif ai_unavailable_warning:
-                    result.warnings.append(ai_unavailable_warning)
                 successes.append((result.output_path, output_name))
                 report.append(
                     {
@@ -981,10 +912,10 @@ async def convert(
                         "pages": result.page_count,
                         "sheets": result.sheet_count,
                         "tables": result.table_count,
-                        "ai": ai_summary,
+                        "math": result.math_report(),
                     }
                 )
-            except (ConversionError, AiAssistError) as exc:
+            except ConversionError as exc:
                 report.append({"file": original_name, "status": "error", "message": str(exc)})
             except Exception as exc:  # avoid leaking stack traces to the browser
                 LOGGER.exception("Unexpected conversion failure for %s", original_name)
@@ -1022,16 +953,21 @@ async def convert(
                 message="Đã chuyển đổi xong. Đang gửi file về trình duyệt…",
                 current_file=None,
             )
+            media_type = (
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                if output_format == "xlsx"
+                else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
             return FileResponse(
                 output_path,
-                media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                media_type=media_type,
                 filename=output_name,
                 headers=headers,
                 background=BackgroundTask(shutil.rmtree, work_dir, ignore_errors=True),
             )
 
         zip_path = work_dir / "ocr2word-ket-qua.zip"
-        PROGRESS.update(job_id, status="packaging", percent=97, message="Đang đóng gói các file Word…")
+        PROGRESS.update(job_id, status="packaging", percent=97, message="Đang đóng gói file kết quả…")
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for output_path, output_name in successes:
                 archive.write(output_path, output_name)

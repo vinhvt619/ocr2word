@@ -6,6 +6,7 @@ import { errorMessage, normalizeOptions, requestBody } from "../../../lib/api";
 import { createBrowserUploadUrl } from "../../../lib/blob";
 import {
   ALLOWED_EXTENSIONS,
+  EXCEL_EXTENSIONS,
   MAX_FILES,
   MAX_FILE_BYTES,
   MAX_TOTAL_BYTES,
@@ -52,6 +53,13 @@ export default async function handler(request: NextApiRequest, response: NextApi
     const body = requestBody(request);
     const incomingFiles = validateFiles(body.files);
     const options = normalizeOptions(body.options);
+    if (options.output_format === "xlsx") {
+      for (const file of incomingFiles) {
+        if (EXCEL_EXTENSIONS.has(extensionOf(file.name))) {
+          throw new Error("Chuyển đổi sang Excel (.xlsx) chỉ nhận file PDF hoặc hình ảnh (không nhận file Excel làm đầu vào).");
+        }
+      }
+    }
     const jobId = randomUUID().replaceAll("-", "");
     const files: JobFile[] = incomingFiles.map((file, index) => {
       const extension = extensionOf(file.name);
@@ -67,7 +75,7 @@ export default async function handler(request: NextApiRequest, response: NextApi
       content_type: file.content_type,
       url: await createBrowserUploadUrl(file.pathname, file.content_type, file.size),
     })));
-    const output = outputDetails(files, options.ai_assist);
+    const output = outputDetails(files, options.output_format);
     const now = new Date();
     const expiresAt = new Date(now.getTime() + RESULT_TTL_MS);
     const outputPathname = `ocr2word/${jobId}/output/result.${output.extension}`;

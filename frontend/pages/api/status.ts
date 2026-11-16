@@ -12,18 +12,6 @@ const unavailableOcr = {
   message: "Không kết nối được container OCR trên Vercel.",
 };
 
-const unavailableAi = {
-  available: false,
-  installed: false,
-  server_running: false,
-  model_available: false,
-  model: process.env.OCR2WORD_AI_MODEL || "gemini-3.7-flash",
-  provider: "Google Gemini API",
-  endpoint: "https://generativelanguage.googleapis.com/v1beta/openai",
-  requires_api_key: true,
-  message: "Chưa có Gemini API key. Hãy chạy .\\setup-gemini.ps1 một lần.",
-};
-
 export default async function handler(request: NextApiRequest, response: NextApiResponse) {
   if (request.method !== "GET") {
     response.setHeader("Allow", "GET");
@@ -59,7 +47,13 @@ export default async function handler(request: NextApiRequest, response: NextApi
     app: "OCR2Word",
     version: "2.0.0",
     ocr: workerStatus.ocr ?? unavailableOcr,
-    ai: workerStatus.ai ?? unavailableAi,
+    math_ocr: workerStatus.math_ocr ?? {
+      available: false,
+      installed: false,
+      engines: [],
+      default_engine: null,
+      message: "Chưa hỗ trợ nhận diện công thức toán trên worker.",
+    },
     formats: Array.from(ALLOWED_EXTENSIONS).map((extension) => `.${extension}`).sort(),
     limits: {
       max_files: MAX_FILES,

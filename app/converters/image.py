@@ -15,7 +15,7 @@ from .base import (
     create_document,
 )
 from .ocr_layout import normalize_document_ocr_text
-from .raster_tables import write_editable_ocr_page
+from . import raster_tables
 
 
 def _rgb_image(image: PillowImage.Image) -> PillowImage.Image:
@@ -35,6 +35,10 @@ def convert_image(
     options: ConversionOptions,
 ) -> ConversionResult:
     options.validate()
+    if options.math_ocr:
+        from .math_pipeline import convert_image_with_math
+
+        return convert_image_with_math(input_path, output_path, options)
     options.report_progress(2, "Đang đọc hình ảnh…")
     try:
         source = PillowImage.open(input_path)
@@ -64,7 +68,7 @@ def convert_image(
                 8 + (frame_index / frame_count) * 82,
                 f"Đang OCR ảnh {frame_index + 1}/{frame_count}…",
             )
-            line_count, table_count, frame_warnings = write_editable_ocr_page(
+            line_count, table_count, frame_warnings = raster_tables.write_editable_ocr_page(
                 doc,
                 frame,
                 options,

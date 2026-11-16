@@ -34,8 +34,13 @@ class MissingOcrEngineError(ConversionError):
     """Raised when OCR is required but Tesseract is unavailable."""
 
 
+MathEngineName = Literal["rules", "local_hybrid"]
+ALLOWED_MATH_ENGINES: tuple[str, ...] = ("rules", "local_hybrid")
+
+
 @dataclass(slots=True)
 class ConversionOptions:
+    output_format: Literal["docx", "xlsx"] = "docx"
     language: str = "vie"
     ocr_mode: Literal["auto", "force", "text"] = "auto"
     dpi: int = 300
@@ -43,6 +48,8 @@ class ConversionOptions:
     preserve_images: bool = True
     preserve_layout: bool = True
     detect_tables: bool = True
+    math_ocr: bool = False
+    math_engine: str | None = None
     min_text_chars: int = 40
     max_excel_columns_per_table: int = 10
     max_excel_rows_per_table: int = 180
@@ -52,7 +59,18 @@ class ConversionOptions:
         compare=False,
     )
 
+    def resolved_math_engine(self) -> MathEngineName:
+        if self.math_engine is None:
+            return "local_hybrid"
+        if self.math_engine not in ALLOWED_MATH_ENGINES:
+            raise ConversionError("Chế độ nhận diện công thức không hợp lệ.")
+        return self.math_engine  # type: ignore[return-value]
+
     def validate(self) -> None:
+        if self.output_format not in {"docx", "xlsx"}:
+            raise ConversionError("Định dạng xuất không hợp lệ (chỉ hỗ trợ docx hoặc xlsx).")
+        if self.output_format == "xlsx" and self.math_ocr:
+            raise ConversionError("Chuyển đổi sang Excel (.xlsx) không hỗ trợ nhận diện công thức toán.")
         if self.ocr_mode not in {"auto", "force", "text"}:
             raise ConversionError("Chế độ OCR không hợp lệ.")
         if self.dpi not in {200, 300, 400}:
@@ -62,6 +80,8 @@ class ConversionOptions:
             raise ConversionError("Ngôn ngữ OCR không hợp lệ.")
         if not 4 <= self.max_excel_columns_per_table <= 20:
             raise ConversionError("Số cột tối đa mỗi bảng Word không hợp lệ.")
+        if self.math_engine is not None and self.math_engine not in ALLOWED_MATH_ENGINES:
+            raise ConversionError("Chế độ nhận diện công thức không hợp lệ.")
 
     def report_progress(self, percent: int | float, message: str) -> None:
         """Report converter-local progress without coupling backends to the web app."""
@@ -83,6 +103,39 @@ class ConversionResult:
     page_count: int | None = None
     sheet_count: int | None = None
     table_count: int | None = None
+    equation_count: int | None = None
+    math_fallback_pages: int = 0
+    math_fallback_regions: int = 0
+    math_status: Literal["complete", "partial", "unavailable", "no_math"] | None = None
+    math_engine: str | None = None
+    math_recognized_by_rules: int = 0
+    math_recognized_by_local: int = 0
+    math_unresolved_regions: int = 0
+    fragment_text_count: int = 0
+
+    def math_report(self) -> dict[str, object] | None:
+        if self.math_status is None:
+            return None
+        payload: dict[str, object] = {
+            "status": self.math_status,
+            "equations": self.equation_count or 0,
+            "fallback_pages": self.math_fallback_pages,
+            "fallback_regions": self.math_fallback_regions,
+        }
+        if self.fragment_text_count > 0:
+            payload["fragment_text_count"] = self.fragment_text_count
+        if (
+            self.math_engine is not None
+            or self.math_recognized_by_rules
+            or self.math_recognized_by_local
+            or self.math_unresolved_regions
+        ):
+            payload["engine"] = self.math_engine or "local_hybrid"
+            payload["recognized_by_rules"] = self.math_recognized_by_rules
+            payload["recognized_by_local"] = self.math_recognized_by_local
+            payload["unresolved_regions"] = self.math_unresolved_regions
+            payload["fragment_text_count"] = self.fragment_text_count
+        return payload
 
 
 def _set_style_font(style, name: str, size: float, color: str | None = None) -> None:
@@ -125,13 +178,13 @@ def create_document(
         section.page_width = Inches(8.5)
         section.page_height = Inches(11)
 
-    safe_margin = max(0.45, min(float(margin_inches), 1.5))
+    safe_margin = max(0.20, min(float(margin_inches), 1.5))
     section.top_margin = Inches(safe_margin)
     section.right_margin = Inches(safe_margin)
     section.bottom_margin = Inches(safe_margin)
     section.left_margin = Inches(safe_margin)
-    section.header_distance = Inches(0.492)
-    section.footer_distance = Inches(0.492)
+    section.header_distance = min(Inches(safe_margin * 0.8), Inches(0.492))
+    section.footer_distance = min(Inches(safe_margin * 0.8), Inches(0.492))
 
     normal = doc.styles["Normal"]
     _set_style_font(normal, body_font, 11)
@@ -179,6 +232,26 @@ def add_compact_page_break(document: DocumentObject) -> None:
     one-point, non-keeping separator still provides a deterministic source
     page boundary while fitting in the smallest remaining line area.
     """
+
+    # If the last paragraph in the document is already empty (no text, drawing, or math),
+    # attach the page break directly to it instead of creating a new paragraph.
+    if document.paragraphs:
+        last_p = document.paragraphs[-1]
+        has_text = bool(last_p.text.strip())
+        has_drawings = bool(last_p._element.xpath(".//a:blip") or last_p._element.xpath(".//w:drawing"))
+        has_math = bool(last_p._element.xpath(".//m:oMath"))
+        if not (has_text or has_drawings or has_math):
+            paragraph_format = last_p.paragraph_format
+            paragraph_format.space_before = Pt(0)
+            paragraph_format.space_after = Pt(0)
+            paragraph_format.line_spacing = Pt(1)
+            paragraph_format.keep_together = False
+            paragraph_format.keep_with_next = False
+            paragraph_format.widow_control = False
+            run = last_p.add_run()
+            run.font.size = Pt(1)
+            run.add_break(WD_BREAK.PAGE)
+            return
 
     paragraph = document.add_paragraph()
     paragraph_format = paragraph.paragraph_format

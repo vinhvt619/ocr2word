@@ -13,14 +13,6 @@ if (-not (Test-Path -LiteralPath $venvPython)) {
 }
 
 Set-Location -LiteralPath $projectRoot
-$localEnvFile = Join-Path $projectRoot ".env"
-if (Test-Path -LiteralPath $localEnvFile) {
-    foreach ($line in Get-Content -LiteralPath $localEnvFile) {
-        if ($line -match '^\s*(GEMINI_API_KEY|OCR2WORD_AI_MODEL)=(.*)$') {
-            [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], "Process")
-        }
-    }
-}
 Write-Host "OCR2Word đang chạy tại http://127.0.0.1:$Port" -ForegroundColor Green
 Write-Host "Nhấn Ctrl+C để dừng."
 & $venvPython -m uvicorn app.main:app --host 127.0.0.1 --port $Port

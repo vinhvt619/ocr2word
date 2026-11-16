@@ -6,6 +6,7 @@ const state = {
   resultJobId: null,
   resultIsObjectUrl: false,
   busy: false,
+  outputFormat: "docx",
   progressValue: 0,
 };
 
@@ -32,25 +33,25 @@ const elements = {
   engineStatus: document.querySelector("#engineStatus"),
   ocrInfo: document.querySelector("#ocrInfo"),
   forceOcr: document.querySelector("#forceOcr"),
+  outputDocx: document.querySelector("#outputDocx"),
+  outputXlsx: document.querySelector("#outputXlsx"),
+  excelModeNotice: document.querySelector("#excelModeNotice"),
   language: document.querySelector("#language"),
   dpi: document.querySelector("#dpi"),
   preserveImages: document.querySelector("#preserveImages"),
   preserveLayout: document.querySelector("#preserveLayout"),
   detectTables: document.querySelector("#detectTables"),
   pageBreaks: document.querySelector("#pageBreaks"),
-  aiAssist: document.querySelector("#aiAssist"),
-  aiConfig: document.querySelector("#aiConfig"),
-  aiInfo: document.querySelector("#aiInfo"),
-  aiSetupHint: document.querySelector("#aiSetupHint"),
-  aiModelBadge: document.querySelector("#aiModelBadge"),
-  aiSwitchDescription: document.querySelector("#aiSwitchDescription"),
-  aiProviderTitle: document.querySelector("#aiProviderTitle"),
-  aiProviderDescription: document.querySelector("#aiProviderDescription"),
-  aiSetupCopy: document.querySelector("#aiSetupCopy"),
-  aiSetupCommand: document.querySelector("#aiSetupCommand"),
-  aiPrivacy: document.querySelector("#aiPrivacy"),
+  mathOcr: document.querySelector("#mathOcr"),
+  mathEngineRow: document.querySelector("#mathEngineRow"),
+  mathEngine: document.querySelector("#mathEngine"),
+  mathOcrHelp: document.querySelector("#mathOcrHelp"),
   privacyBadge: document.querySelector("#privacyBadge"),
   privacyFooter: document.querySelector("#privacyFooter"),
+  savedIndicator: document.querySelector("#savedIndicator"),
+  advancedActiveCount: document.querySelector("#advancedActiveCount"),
+  convertMoreBtn: document.querySelector("#convertMoreBtn"),
+  resetSettingsBtn: document.querySelector("#resetSettingsBtn"),
 };
 
 const imageExtensions = new Set(["png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"]);
@@ -118,30 +119,121 @@ function hasOcrInput() {
   });
 }
 
-function syncAiPanel() {
-  const enabled = elements.aiAssist.checked;
-  const aiStatus = state.status?.ai;
-  const unavailable = Boolean(aiStatus && !aiStatus.available);
-  elements.aiConfig.hidden = !enabled && !unavailable;
-  if (enabled && unavailable) {
-    elements.aiAssist.checked = false;
-    elements.aiConfig.hidden = false;
-    showNotice(aiStatus.message || "Tính năng AI chưa sẵn sàng.");
+function selectedMathEngine() {
+  return elements.mathEngine?.value || "local_hybrid";
+}
+
+function updateMathEngineHelp() {
+  if (elements.mathEngineRow) {
+    elements.mathEngineRow.hidden = !elements.mathOcr.checked;
   }
+  if (!elements.mathOcrHelp) return;
+  const engine = selectedMathEngine();
+  let message = "Mặc định dùng quy tắc cấu trúc PDF kết hợp mô hình chạy trên máy chủ. Vùng công thức ngoài phạm vi hỗ trợ được giữ thành ảnh kèm cảnh báo; vui lòng đối chiếu lại ký hiệu sau khi chuyển đổi.";
+  if (engine === "rules") {
+    message = "Chỉ phân tích cấu trúc chữ, baseline và nét vẽ của PDF có lớp chữ số (không nạp model, không dùng API). Không hỗ trợ ảnh hoặc PDF scan.";
+  } else {
+    const localInfo = state.status?.math_ocr?.engines?.local_hybrid;
+    if (localInfo && localInfo.available === false) {
+      message += " (Lưu ý: Mô hình công thức cục bộ chưa sẵn sàng trên máy chủ này; với PDF số bạn có thể chọn 'Chỉ theo quy tắc PDF'.)";
+    }
+  }
+  elements.mathOcrHelp.textContent = message;
 }
 
 function updateBusyControls() {
   const deploymentUnavailable = state.status?.deployment?.mode === "vercel"
     && state.status.deployment.available === false;
+  const isXlsx = state.outputFormat === "xlsx";
   elements.fileInput.disabled = state.busy;
   elements.clearFiles.disabled = state.busy;
   elements.addMore.disabled = state.busy;
+  if (elements.outputDocx) elements.outputDocx.disabled = state.busy;
+  if (elements.outputXlsx) elements.outputXlsx.disabled = state.busy;
   elements.convertButton.disabled = state.busy || state.files.length === 0 || deploymentUnavailable;
-  elements.aiAssist.disabled = state.busy || state.status?.ai?.available === false;
+
+  if (isXlsx) {
+    elements.mathOcr.disabled = true;
+    if (elements.mathEngine) elements.mathEngine.disabled = true;
+    elements.preserveImages.disabled = true;
+    elements.preserveLayout.disabled = true;
+    elements.pageBreaks.disabled = true;
+  } else {
+    elements.mathOcr.disabled = state.busy;
+    if (elements.mathEngine) elements.mathEngine.disabled = state.busy;
+    elements.preserveImages.disabled = state.busy;
+    elements.preserveLayout.disabled = state.busy;
+    elements.pageBreaks.disabled = state.busy;
+  }
   elements.dropzone.setAttribute("aria-disabled", String(state.busy));
   elements.fileList.querySelectorAll(".remove-file").forEach((button) => {
     button.disabled = state.busy;
   });
+}
+
+function updateOutputFormatUI() {
+  const isXlsx = state.outputFormat === "xlsx";
+  if (elements.outputDocx) {
+    elements.outputDocx.checked = !isXlsx;
+    elements.outputDocx.disabled = state.busy;
+  }
+  if (elements.outputXlsx) {
+    elements.outputXlsx.checked = isXlsx;
+    elements.outputXlsx.disabled = state.busy;
+  }
+  if (elements.excelModeNotice) elements.excelModeNotice.hidden = !isXlsx;
+
+  if (isXlsx) {
+    elements.mathOcr.checked = false;
+    if (elements.mathEngineRow) elements.mathEngineRow.hidden = true;
+    if (elements.downloadAgain) {
+      elements.downloadAgain.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true" width="16" height="16"><path d="M3 17a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4a1 1 0 1 0-2 0v3H5v-3a1 1 0 1 0-2 0v4zm7-4a1 1 0 0 0 .707-.293l4-4a1 1 0 1 0-1.414-1.414L11 9.586V3a1 1 0 1 0-2 0v6.586L6.707 7.293a1 1 0 0 0-1.414 1.414l4 4A1 1 0 0 0 10 13z"/></svg> Tải lại file Excel (.xlsx)';
+    }
+    if (elements.resultMessage) {
+      elements.resultMessage.textContent = "File Excel đã được tạo thành công và tự động tải về.";
+    }
+    // Revalidate pre-selected files when switching Word -> Excel
+    const excelFiles = state.files.filter((f) => ["xlsx", "xlsm", "xls"].includes(extensionOf(f.name)));
+    if (excelFiles.length > 0) {
+      state.files = state.files.filter((f) => !["xlsx", "xlsm", "xls"].includes(extensionOf(f.name)));
+      showNotice(`Đã loại bỏ ${excelFiles.length} file Excel vì định dạng xuất Excel chỉ nhận file PDF hoặc hình ảnh.`);
+      renderFiles();
+    }
+  } else {
+    if (elements.mathOcr.checked && elements.mathEngineRow) {
+      elements.mathEngineRow.hidden = false;
+    }
+    if (elements.downloadAgain) {
+      elements.downloadAgain.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true" width="16" height="16"><path d="M3 17a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4a1 1 0 1 0-2 0v3H5v-3a1 1 0 1 0-2 0v4zm7-4a1 1 0 0 0 .707-.293l4-4a1 1 0 1 0-1.414-1.414L11 9.586V3a1 1 0 1 0-2 0v6.586L6.707 7.293a1 1 0 0 0-1.414 1.414l4 4A1 1 0 0 0 10 13z"/></svg> Tải lại file Word (.docx)';
+    }
+    if (elements.resultMessage) {
+      elements.resultMessage.textContent = "File Word đã được tạo thành công và tự động tải về.";
+    }
+  }
+
+  // Update main action button text and progress text for selected format
+  if (elements.convertButton) {
+    const labelSpan = elements.convertButton.querySelector(".button-label > span:not(.kbd-hint)");
+    if (labelSpan) {
+      labelSpan.textContent = isXlsx ? "Bắt đầu chuyển sang Excel (.xlsx)" : "Bắt đầu chuyển sang Word (.docx)";
+    }
+    const progressSpan = elements.convertButton.querySelector(".button-progress");
+    if (progressSpan) {
+      progressSpan.innerHTML = isXlsx
+        ? "<i></i> Đang nhận diện và tạo bảng tính Excel..."
+        : "<i></i> Đang nhận diện và tạo file Word...";
+    }
+  }
+
+  // Update text mode help description for selected format
+  const textModeRadio = document.querySelector('input[name="ocrMode"][value="text"]');
+  const textModeSmall = textModeRadio ? textModeRadio.closest(".radio-card")?.querySelector("small") : null;
+  if (textModeSmall) {
+    textModeSmall.textContent = isXlsx
+      ? "Chỉ trích xuất lớp chữ có sẵn; không đọc vùng ảnh quét/scan"
+      : "Giữ trang scan như ảnh; chỉ sửa được lớp chữ sẵn có";
+  }
+  updateBusyControls();
 }
 
 function renderFiles() {
@@ -216,6 +308,10 @@ function addFiles(fileList) {
 
   for (const file of fileList) {
     const extension = extensionOf(file.name);
+    if (state.outputFormat === "xlsx" && ["xlsx", "xlsm", "xls"].includes(extension)) {
+      errors.push(`${file.name}: Chuyển đổi sang Excel (.xlsx) chỉ nhận PDF hoặc ảnh.`);
+      continue;
+    }
     if (!allowedExtensions.has(extension)) {
       errors.push(`${file.name}: định dạng không hỗ trợ`);
       continue;
@@ -264,7 +360,8 @@ function filenameFromHeaders(getHeader) {
     try { return decodeURIComponent(utf8[1]); } catch (_error) { /* continue */ }
   }
   const basic = disposition.match(/filename="?([^";]+)"?/i);
-  return basic ? basic[1] : (state.files.length > 1 ? "ocr2word-ket-qua.zip" : "tai-lieu-editable.docx");
+  const fallbackSingle = state.outputFormat === "xlsx" ? "tai-lieu-editable.xlsx" : "tai-lieu-editable.docx";
+  return basic ? basic[1] : (state.files.length > 1 ? "ocr2word-ket-qua.zip" : fallbackSingle);
 }
 
 function downloadBlob(blob, filename) {
@@ -297,28 +394,67 @@ function downloadRemote(url, filename, jobId) {
 }
 
 function renderReport(report, filename) {
+  const isXlsx = state.outputFormat === "xlsx";
   const successful = report.filter((item) => item.status === "success");
   const failed = report.filter((item) => item.status === "error");
   const warnings = successful.flatMap((item) => item.warnings || []);
   const detectedTables = successful.reduce((sum, item) => sum + (item.tables || 0), 0);
-  const aiProcessed = successful.reduce((sum, item) => sum + (item.ai?.processed_paragraphs || 0), 0);
-  const aiChanged = successful.reduce((sum, item) => sum + (item.ai?.changed_paragraphs || 0), 0);
-  elements.resultTitle.textContent = failed.length ? "Đã hoàn tất một phần" : "Đã chuyển đổi xong";
-  elements.resultMessage.textContent = `${filename} đã được tải xuống.`;
+  const sheetCount = successful.reduce((sum, item) => sum + (item.sheets || 0), 0);
+  const mathResults = successful.filter((item) => item.math);
+  const equationCount = mathResults.reduce((sum, item) => sum + (item.math.equations || 0), 0);
+  const fallbackPages = mathResults.reduce((sum, item) => sum + (item.math.fallback_pages || 0), 0);
+  const fallbackRegions = mathResults.reduce((sum, item) => sum + (item.math.fallback_regions || 0), 0);
+  const recognizedByRules = mathResults.reduce((sum, item) => sum + (item.math.recognized_by_rules || 0), 0);
+  const recognizedByLocal = mathResults.reduce((sum, item) => sum + (item.math.recognized_by_local || 0), 0);
+  const mathIncomplete = !isXlsx && mathResults.some((item) => ["partial", "unavailable"].includes(item.math.status));
+  const noEquations = !isXlsx && mathIncomplete && equationCount === 0;
+  const mathNotDetected = !isXlsx && mathResults.length > 0 && !mathIncomplete && equationCount === 0;
+  const mathNotEnabled = !isXlsx && !mathResults.length && warnings.some((warning) => warning.includes("Phát hiện dấu hiệu ký hiệu hoặc font toán học"));
+
+  const hasWarning = failed.length > 0 || (!isXlsx && (mathIncomplete || mathNotDetected || mathNotEnabled));
+  elements.resultPanel.classList.toggle("is-error", noEquations || (failed.length > 0 && successful.length === 0));
+  elements.resultPanel.classList.toggle("is-warning", !noEquations && hasWarning);
+  elements.resultPanel.querySelector(".result-icon path").setAttribute("d", (noEquations || (!isXlsx && (mathIncomplete || mathNotDetected || mathNotEnabled)))
+    ? "M12 7v6m0 4h.01M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20"
+    : "m5 12 4 4L19 6");
+  elements.resultTitle.textContent = noEquations ? "Chưa tạo được Equation"
+    : mathIncomplete ? "Công thức mới chuyển đổi được một phần"
+      : mathNotDetected ? "Không tìm thấy công thức để tạo Equation"
+      : mathNotEnabled ? "Đã chuyển chữ/bố cục, chưa nhận diện công thức"
+        : failed.length ? "Đã hoàn tất một phần" : "Đã chuyển đổi xong";
+  elements.resultMessage.textContent = noEquations
+    ? "File giữ nội dung nguồn đã tải xuống để đối chiếu; công thức trong file này chưa chỉnh sửa được."
+    : `${filename} đã được tải xuống.`;
+  if (noEquations) {
+    showNotice("Nhận diện công thức chưa thành công với chế độ đã chọn. Xem chi tiết bên dưới.");
+    setProgress(100, "Chưa tạo được Equation", "Xử lý đã kết thúc, nhưng chưa có công thức Word chỉnh sửa được.", { error: true });
+  } else if (mathNotEnabled) {
+    showNotice("Tài liệu có dấu hiệu công thức toán. Chế độ chuyển chữ/bố cục không tạo Equation; bật 'Nhận diện công thức toán' nếu cần sửa công thức.");
+  }
   elements.resultDetails.replaceChildren();
+  if (!isXlsx && mathResults.length) {
+    const detail = document.createElement("li");
+    const breakdown = [];
+    if (recognizedByRules > 0) breakdown.push(`${recognizedByRules} từ quy tắc PDF`);
+    if (recognizedByLocal > 0) breakdown.push(`${recognizedByLocal} từ mô hình cục bộ`);
+    const breakdownText = breakdown.length ? ` (${breakdown.join(", ")})` : "";
+    detail.textContent = `${equationCount} Equation chỉnh sửa được${breakdownText}; ${fallbackPages} trang và ${fallbackRegions} vùng còn giữ dạng ảnh.`;
+    elements.resultDetails.append(detail);
+  }
   if (successful.length > 1) {
     const detail = document.createElement("li");
-    detail.textContent = `${successful.length} file Word đã được đóng gói trong ZIP.`;
+    detail.textContent = `${successful.length} file ${isXlsx ? "Excel" : "Word"} đã được đóng gói trong ZIP.`;
     elements.resultDetails.append(detail);
   }
-  if (detectedTables > 0) {
+  if (detectedTables > 0 || (isXlsx && sheetCount > 0)) {
     const detail = document.createElement("li");
-    detail.textContent = `${detectedTables} bảng trong ảnh/PDF scan đã được tạo thành bảng Word có thể chỉnh sửa.`;
-    elements.resultDetails.append(detail);
-  }
-  if (aiProcessed > 0) {
-    const detail = document.createElement("li");
-    detail.textContent = `AI đã kiểm tra ${aiProcessed} đoạn và sửa ${aiChanged} đoạn chữ; bảng và kiểu chữ được giữ nguyên.`;
+    if (isXlsx) {
+      detail.textContent = sheetCount > 0
+        ? `${sheetCount} sheet đã được tạo trong bảng tính Excel có thể chỉnh sửa (${detectedTables} bảng dữ liệu).`
+        : `${detectedTables} bảng đã được trích xuất thành các sheet Excel có thể chỉnh sửa.`;
+    } else {
+      detail.textContent = `${detectedTables} bảng trong ảnh/PDF scan đã được tạo thành bảng Word có thể chỉnh sửa.`;
+    }
     elements.resultDetails.append(detail);
   }
   for (const warning of warnings.slice(0, 3)) {
@@ -444,17 +580,23 @@ function sendConversion(form) {
   });
 }
 
-function conversionOptions(useAi) {
-  return {
+function conversionOptions() {
+  const isXlsx = state.outputFormat === "xlsx";
+  const opts = {
+    output_format: state.outputFormat || "docx",
     language: elements.language.value,
     ocr_mode: document.querySelector('input[name="ocrMode"]:checked').value,
     dpi: Number(elements.dpi.value),
-    preserve_images: elements.preserveImages.checked,
-    preserve_layout: elements.preserveLayout.checked,
+    preserve_images: isXlsx ? false : elements.preserveImages.checked,
+    preserve_layout: isXlsx ? false : elements.preserveLayout.checked,
     detect_tables: elements.detectTables.checked,
-    page_breaks: elements.pageBreaks.checked,
-    ai_assist: useAi,
+    page_breaks: isXlsx ? false : elements.pageBreaks.checked,
   };
+  if (!isXlsx) {
+    opts.math_ocr = elements.mathOcr.checked;
+    opts.math_engine = selectedMathEngine();
+  }
+  return opts;
 }
 
 async function responseError(response, fallback) {
@@ -511,13 +653,13 @@ async function waitForVercelJob(jobId) {
   throw new Error("Lượt chuyển đổi vượt quá thời gian chờ 35 phút.");
 }
 
-async function sendVercelConversion(useAi) {
+async function sendVercelConversion() {
   const createResponse = await fetch("/api/jobs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       files: state.files.map((file) => ({ name: file.name, size: file.size })),
-      options: conversionOptions(useAi),
+      options: conversionOptions(),
     }),
   });
   if (!createResponse.ok) {
@@ -594,10 +736,10 @@ async function waitForModalJob(jobId) {
   throw new Error("Lượt chuyển đổi vượt quá thời gian chờ 40 phút.");
 }
 
-async function sendModalConversion(useAi) {
+async function sendModalConversion() {
   const form = new FormData();
   state.files.forEach((file) => form.append("files", file, file.name));
-  form.append("options", JSON.stringify(conversionOptions(useAi)));
+  form.append("options", JSON.stringify(conversionOptions()));
   const created = await createModalJob(form);
   state.resultJobId = created.job_id;
   setProgress(20, "Đã tải tài liệu lên Modal", "Đang khởi động container OCR…");
@@ -606,16 +748,6 @@ async function sendModalConversion(useAi) {
 
 async function convertFiles() {
   if (!state.files.length || state.busy) return;
-  const useAi = elements.aiAssist.checked;
-  if (useAi && !state.status?.ai?.available) {
-    showNotice(state.status?.ai?.message || "AI chưa sẵn sàng.");
-    elements.aiConfig.hidden = false;
-    return;
-  }
-  if (state.status?.deployment?.mode === "vercel" && !state.status.deployment.available) {
-    showNotice(state.status.deployment.message || "Dự án Vercel chưa cấu hình xong.");
-    return;
-  }
   state.busy = true;
   resetProgress();
   showNotice("");
@@ -628,22 +760,28 @@ async function convertFiles() {
 
   try {
     if (state.status?.deployment?.mode === "modal") {
-      const result = await sendModalConversion(useAi);
-      const filename = result.download_name || (state.files.length > 1 ? "ocr2word-ket-qua.zip" : "tai-lieu-editable.docx");
+      const result = await sendModalConversion();
+      const fallbackSingle = state.outputFormat === "xlsx" ? "tai-lieu-editable.xlsx" : "tai-lieu-editable.docx";
+      const filename = result.download_name || (state.files.length > 1 ? "ocr2word-ket-qua.zip" : fallbackSingle);
       setProgress(100, "Đã chuyển đổi xong", "Kết quả được giữ tối đa 7 ngày trên Modal.");
       downloadRemote(result.download_url, filename, result.job_id);
       renderReport(Array.isArray(result.report) ? result.report : [], filename);
     } else if (state.status?.deployment?.mode === "vercel") {
-      const result = await sendVercelConversion(useAi);
-      const filename = result.download_name || (state.files.length > 1 ? "ocr2word-ket-qua.zip" : "tai-lieu-editable.docx");
+      const result = await sendVercelConversion();
+      const fallbackSingle = state.outputFormat === "xlsx" ? "tai-lieu-editable.xlsx" : "tai-lieu-editable.docx";
+      const filename = result.download_name || (state.files.length > 1 ? "ocr2word-ket-qua.zip" : fallbackSingle);
       setProgress(100, "Đã chuyển đổi xong", "Kết quả đã sẵn sàng để tải xuống.");
       downloadRemote(result.download_url, filename, result.job_id);
       renderReport(Array.isArray(result.report) ? result.report : [], filename);
     } else {
       const form = new FormData();
       state.files.forEach((file) => form.append("files", file, file.name));
-      const options = conversionOptions(useAi);
-      for (const [key, value] of Object.entries(options)) form.append(key, String(value));
+      const options = conversionOptions();
+      for (const [key, value] of Object.entries(options)) {
+        if (value !== undefined && value !== null) {
+          form.append(key, String(value));
+        }
+      }
       const jobId = createJobId();
       form.append("job_id", jobId);
       stopPolling = startProgressPolling(jobId);
@@ -671,7 +809,7 @@ async function loadStatus() {
     const response = await fetch("/api/status", { cache: "no-store" });
     if (!response.ok) throw new Error("status unavailable");
     state.status = await response.json();
-    const { ocr, ai } = state.status;
+    const { ocr } = state.status;
     const onVercel = state.status?.deployment?.mode === "vercel";
     const onModal = state.status?.deployment?.mode === "modal";
     elements.engineStatus.classList.remove("is-checking", "is-warning");
@@ -685,38 +823,17 @@ async function loadStatus() {
       elements.ocrInfo.classList.add("is-warning");
       elements.ocrInfo.querySelector("p").textContent = ocr.message;
     }
-    if (ai) {
-      elements.aiModelBadge.textContent = ai.model;
-      elements.aiInfo.textContent = ai.message;
-      elements.aiInfo.classList.toggle("is-warning", !ai.available);
-      elements.aiSetupHint.hidden = ai.available;
-      elements.aiSwitchDescription.textContent = "Google Gemini sửa dấu và từ bị dính/tách";
-      elements.aiProviderTitle.textContent = ai.provider || "Google Gemini API";
-      elements.aiProviderDescription.textContent = "Dùng Free Tier, chỉ gọi khi bạn bật AI";
-      elements.aiSetupCopy.textContent = "Tạo API key tại Google AI Studio rồi chạy một lần:";
-      elements.aiSetupCommand.textContent = onModal ? ".\\setup-modal.ps1" : ".\\setup-gemini.ps1";
-      if (onVercel) {
-        elements.aiPrivacy.textContent = "File được lưu tạm trong Vercel Blob riêng tư. Khi bật AI, chỉ phần chữ OCR được gửi tới Google Gemini để hiệu đính; file gốc tự xóa sau khi xử lý và kết quả hết hạn sau 24 giờ.";
-        elements.privacyBadge.lastChild.textContent = " Blob riêng tư";
-        elements.privacyFooter.innerHTML = "<strong>OCR2Word</strong> • File nguồn tự xóa sau chuyển đổi; kết quả trong Blob riêng tư hết hạn sau 24 giờ.";
-      } else if (onModal) {
-        elements.aiPrivacy.textContent = "File được truyền mã hóa vào tác vụ Modal và tự hết hạn tối đa sau 7 ngày. Khi bật AI, chỉ phần chữ OCR được gửi tới Google Gemini để hiệu đính.";
-        elements.privacyBadge.lastChild.textContent = " Tác vụ riêng tư";
-        elements.privacyFooter.innerHTML = "<strong>OCR2Word</strong> • Container chỉ bật khi sử dụng; file và kết quả Modal tự hết hạn tối đa sau 7 ngày.";
-      } else {
-        elements.aiPrivacy.textContent = "Khi bật AI, chỉ phần chữ OCR được gửi tới Google Gemini để hiệu đính; file tài liệu vẫn được xử lý trên máy của bạn.";
-        elements.privacyBadge.lastChild.textContent = " Xử lý tài liệu trên máy";
-        elements.privacyFooter.innerHTML = "<strong>OCR2Word</strong> • OCR chạy cục bộ; chỉ chữ OCR được gửi tới Gemini khi bạn bật AI.";
-      }
-      if (!ai.available) {
-        elements.aiAssist.checked = false;
-        elements.aiAssist.disabled = true;
-      }
+    if (onVercel) {
+      elements.privacyBadge.lastChild.textContent = " Blob riêng tư";
+      elements.privacyFooter.innerHTML = "<strong>OCR2Word</strong> • File nguồn tự xóa sau chuyển đổi thành công. Kết quả hết hạn sau 24 giờ.";
+    } else if (onModal) {
+      elements.privacyBadge.lastChild.textContent = " Xử lý trên Modal";
+      elements.privacyFooter.innerHTML = "<strong>OCR2Word</strong> • File và kết quả trong tác vụ Modal hết hạn sau tối đa 7 ngày.";
     }
     if (onVercel && state.status.deployment.available === false) {
       showNotice(state.status.deployment.message || "Dự án Vercel chưa cấu hình xong.");
     }
-    syncAiPanel();
+    updateMathEngineHelp();
     renderFiles();
   } catch (_error) {
     elements.engineStatus.classList.remove("is-checking");
@@ -724,8 +841,6 @@ async function loadStatus() {
     elements.engineStatus.querySelector("span:last-child").textContent = "Không đọc được trạng thái";
     elements.ocrInfo.classList.add("is-warning");
     elements.ocrInfo.querySelector("p").textContent = "Không thể kết nối đến dịch vụ chuyển đổi.";
-    elements.aiInfo.textContent = "Không đọc được trạng thái AI.";
-    elements.aiInfo.classList.add("is-warning");
   }
 }
 
@@ -738,6 +853,18 @@ elements.dropzone.addEventListener("keydown", (event) => {
     elements.fileInput.click();
   }
 });
+document.querySelectorAll('input[name="outputFormat"]').forEach((radio) => {
+  radio.addEventListener("change", (e) => {
+    if (state.busy) {
+      updateOutputFormatUI();
+      return;
+    }
+    state.outputFormat = e.target.value;
+    updateOutputFormatUI();
+    saveUserSettings();
+  });
+});
+
 elements.fileInput.addEventListener("change", () => addFiles(elements.fileInput.files));
 elements.addMore.addEventListener("click", () => {
   if (!state.busy) elements.fileInput.click();
@@ -749,10 +876,16 @@ elements.clearFiles.addEventListener("click", () => {
   renderFiles();
 });
 elements.convertButton.addEventListener("click", convertFiles);
-elements.aiAssist.addEventListener("change", () => {
+elements.mathOcr.addEventListener("change", () => {
   showNotice("");
-  syncAiPanel();
+  updateMathEngineHelp();
 });
+if (elements.mathEngine) {
+  elements.mathEngine.addEventListener("change", () => {
+    showNotice("");
+    updateMathEngineHelp();
+  });
+}
 elements.downloadAgain.addEventListener("click", async () => {
   if (!state.resultName) return;
   if (state.resultJobId) {
@@ -794,10 +927,236 @@ elements.dropzone.addEventListener("drop", (event) => {
   if (!state.busy) addFiles(event.dataTransfer.files);
 });
 
+// ==========================================
+// Settings Persistence & UI Interaction
+// ==========================================
+
+const SETTINGS_STORAGE_KEY = "ocr2word_user_settings_v2";
+
+let savedNoticeTimer = null;
+function showSavedNotice() {
+  const indicator = elements.savedIndicator || document.querySelector("#savedIndicator");
+  if (!indicator) return;
+  indicator.classList.add("is-visible");
+  clearTimeout(savedNoticeTimer);
+  savedNoticeTimer = setTimeout(() => {
+    indicator.classList.remove("is-visible");
+  }, 2200);
+}
+
+function updateAdvancedBadge() {
+  const badge = elements.advancedActiveCount || document.querySelector("#advancedActiveCount");
+  if (!badge) return;
+  const items = [elements.preserveLayout, elements.preserveImages, elements.detectTables, elements.pageBreaks];
+  const activeCount = items.filter((item) => item && item.checked).length;
+  badge.textContent = `${activeCount}/4 đang bật`;
+  badge.classList.toggle("is-partial", activeCount > 0 && activeCount < 4);
+  badge.classList.toggle("is-none", activeCount === 0);
+}
+
+function updateActivePresetHighlight() {
+  const currentOcr = document.querySelector('input[name="ocrMode"]:checked')?.value || "auto";
+  const mathOn = Boolean(elements.mathOcr?.checked);
+
+  document.querySelectorAll(".preset-pill[data-preset]").forEach((pill) => {
+    const preset = pill.dataset.preset;
+    let isActive = false;
+    if (preset === "math") {
+      isActive = mathOn && currentOcr === "auto";
+    } else if (preset === "scan") {
+      isActive = !mathOn && currentOcr === "force";
+    } else if (preset === "tables") {
+      isActive = !mathOn && currentOcr === "auto" && Boolean(elements.detectTables?.checked);
+    }
+    pill.classList.toggle("is-active", isActive);
+  });
+}
+
+function saveUserSettings() {
+  try {
+    const selectedOcr = document.querySelector('input[name="ocrMode"]:checked');
+    const data = {
+      ocrMode: selectedOcr ? selectedOcr.value : "auto",
+      outputFormat: state.outputFormat || "docx",
+      language: elements.language?.value || "vie",
+      dpi: elements.dpi?.value || "300",
+      preserveImages: elements.preserveImages ? elements.preserveImages.checked : true,
+      preserveLayout: elements.preserveLayout ? elements.preserveLayout.checked : true,
+      detectTables: elements.detectTables ? elements.detectTables.checked : true,
+      pageBreaks: elements.pageBreaks ? elements.pageBreaks.checked : true,
+      mathOcr: elements.mathOcr ? elements.mathOcr.checked : false,
+      mathEngine: selectedMathEngine(),
+    };
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(data));
+    showSavedNotice();
+    updateAdvancedBadge();
+    updateActivePresetHighlight();
+  } catch (_error) {
+    /* localStorage inaccessible */
+  }
+}
+
+function restoreUserSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) {
+      updateAdvancedBadge();
+      updateActivePresetHighlight();
+      return;
+    }
+    const saved = JSON.parse(raw);
+    if (saved.outputFormat) {
+      state.outputFormat = saved.outputFormat;
+    }
+    if (saved.ocrMode) {
+      const radio = document.querySelector(`input[name="ocrMode"][value="${saved.ocrMode}"]`);
+      if (radio) radio.checked = true;
+    }
+    if (saved.language && elements.language) elements.language.value = saved.language;
+    if (saved.dpi && elements.dpi) elements.dpi.value = String(saved.dpi);
+    if (typeof saved.preserveImages === "boolean" && elements.preserveImages) elements.preserveImages.checked = saved.preserveImages;
+    if (typeof saved.preserveLayout === "boolean" && elements.preserveLayout) elements.preserveLayout.checked = saved.preserveLayout;
+    if (typeof saved.detectTables === "boolean" && elements.detectTables) elements.detectTables.checked = saved.detectTables;
+    if (typeof saved.pageBreaks === "boolean" && elements.pageBreaks) elements.pageBreaks.checked = saved.pageBreaks;
+    if (typeof saved.mathOcr === "boolean" && elements.mathOcr) elements.mathOcr.checked = saved.mathOcr;
+    if (elements.mathEngine && ["rules", "local_hybrid"].includes(saved.mathEngine)) {
+      elements.mathEngine.value = saved.mathEngine;
+    }
+
+    updateOutputFormatUI();
+    updateMathEngineHelp();
+    updateAdvancedBadge();
+    updateActivePresetHighlight();
+  } catch (_error) {
+    /* json parse error */
+  }
+}
+
+function applyPreset(presetName) {
+  if (state.busy) return;
+  if (presetName === "math") {
+    const radio = document.querySelector('input[name="ocrMode"][value="auto"]');
+    if (radio) radio.checked = true;
+    if (elements.mathOcr) elements.mathOcr.checked = true;
+    if (elements.mathEngine) elements.mathEngine.value = "local_hybrid";
+    if (elements.preserveLayout) elements.preserveLayout.checked = true;
+    if (elements.preserveImages) elements.preserveImages.checked = true;
+    if (elements.detectTables) elements.detectTables.checked = true;
+    if (elements.pageBreaks) elements.pageBreaks.checked = true;
+    if (elements.dpi) elements.dpi.value = "300";
+  } else if (presetName === "scan") {
+    const radio = document.querySelector('input[name="ocrMode"][value="force"]');
+    if (radio) radio.checked = true;
+    if (elements.mathOcr) elements.mathOcr.checked = false;
+    if (elements.language) elements.language.value = "vie";
+    if (elements.preserveLayout) elements.preserveLayout.checked = true;
+    if (elements.preserveImages) elements.preserveImages.checked = true;
+    if (elements.detectTables) elements.detectTables.checked = true;
+    if (elements.pageBreaks) elements.pageBreaks.checked = true;
+    if (elements.dpi) elements.dpi.value = "300";
+  } else if (presetName === "tables") {
+    const radio = document.querySelector('input[name="ocrMode"][value="auto"]');
+    if (radio) radio.checked = true;
+    if (elements.mathOcr) elements.mathOcr.checked = false;
+    if (elements.preserveLayout) elements.preserveLayout.checked = true;
+    if (elements.preserveImages) elements.preserveImages.checked = true;
+    if (elements.detectTables) elements.detectTables.checked = true;
+    if (elements.pageBreaks) elements.pageBreaks.checked = true;
+    if (elements.dpi) elements.dpi.value = "300";
+  } else if (presetName === "default") {
+    const radio = document.querySelector('input[name="ocrMode"][value="auto"]');
+    if (radio) radio.checked = true;
+    if (elements.language) elements.language.value = "vie";
+    if (elements.dpi) elements.dpi.value = "300";
+    if (elements.preserveLayout) elements.preserveLayout.checked = true;
+    if (elements.preserveImages) elements.preserveImages.checked = true;
+    if (elements.detectTables) elements.detectTables.checked = true;
+    if (elements.pageBreaks) elements.pageBreaks.checked = true;
+    if (elements.mathOcr) elements.mathOcr.checked = false;
+    if (elements.mathEngine) elements.mathEngine.value = "local_hybrid";
+  }
+
+  updateMathEngineHelp();
+  saveUserSettings();
+  showNotice(`Đã áp dụng mẫu: ${presetName === 'math' ? 'Toán học & Đồ án' : presetName === 'scan' ? 'Sách & Scan' : presetName === 'tables' ? 'Bảng dữ liệu' : 'Mặc định'}`);
+  setTimeout(() => showNotice(""), 3000);
+}
+
+// Attach change listeners for automatic setting persistence
+const settingWatchList = [
+  elements.language,
+  elements.dpi,
+  elements.preserveLayout,
+  elements.preserveImages,
+  elements.detectTables,
+  elements.pageBreaks,
+  elements.mathOcr,
+  elements.mathEngine,
+];
+settingWatchList.forEach((input) => {
+  if (input) {
+    input.addEventListener("change", () => {
+      saveUserSettings();
+    });
+  }
+});
+
+document.querySelectorAll('input[name="ocrMode"]').forEach((radio) => {
+  radio.addEventListener("change", () => {
+    saveUserSettings();
+  });
+});
+
+// Presets buttons event listeners
+document.querySelectorAll(".preset-pill[data-preset]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    applyPreset(btn.dataset.preset);
+  });
+});
+
+const resetSettingsBtn = elements.resetSettingsBtn || document.querySelector("#resetSettingsBtn");
+if (resetSettingsBtn) {
+  resetSettingsBtn.addEventListener("click", () => {
+    applyPreset("default");
+  });
+}
+
+// Convert more files button
+const convertMoreBtn = elements.convertMoreBtn || document.querySelector("#convertMoreBtn");
+if (convertMoreBtn) {
+  convertMoreBtn.addEventListener("click", () => {
+    if (state.busy) return;
+    state.files = [];
+    resetProgress();
+    renderFiles();
+    elements.fileInput.click();
+  });
+}
+
+// Global keyboard shortcut: Ctrl + Enter / Cmd + Enter
+document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+    if (state.busy) return;
+    event.preventDefault();
+    if (state.files.length > 0) {
+      convertFiles();
+    } else {
+      showNotice("Vui lòng chọn hoặc kéo thả ít nhất 1 tài liệu trước khi bấm chuyển đổi.");
+      elements.fileInput.click();
+    }
+  }
+});
+
 window.addEventListener("beforeunload", () => {
   if (state.resultUrl && state.resultIsObjectUrl) URL.revokeObjectURL(state.resultUrl);
   previewUrls.forEach((url) => URL.revokeObjectURL(url));
   previewUrls.clear();
 });
 
-loadStatus();
+// Restore saved settings on initial load
+restoreUserSettings();
+loadStatus().then(() => {
+  // Re-verify active preset highlight and badge after status sync
+  updateAdvancedBadge();
+  updateActivePresetHighlight();
+});

@@ -2,7 +2,6 @@ param(
     [Parameter(Mandatory = $true)][string]$FilePath,
     [string]$BaseUrl = "http://127.0.0.1:3000",
     [ValidateRange(60, 3600)][int]$TimeoutSeconds = 1800,
-    [switch]$AiAssist,
     [ValidateSet("arn1", "bom1", "cdg1", "cle1", "cpt1", "dub1", "dxb1", "fra1", "gru1", "hkg1", "hnd1", "iad1", "icn1", "kix1", "lhr1", "pdx1", "sfo1", "sin1", "syd1", "yul1")]
     [string]$ExpectedQueueRegion = "sin1",
     [string]$OutputDirectory = "output\vercel-parity"
@@ -51,10 +50,6 @@ Assert-True ($status.runtime.queue.region -eq $ExpectedQueueRegion) "Queue regio
 $languages = @($status.ocr.languages)
 Assert-True ($languages -contains "vie") "Tesseract Vietnamese model is missing."
 Assert-True ($languages -contains "eng") "Tesseract English model is missing."
-if ($AiAssist) {
-    Assert-True ([bool]$status.ai.available) $status.ai.message
-    Assert-True ($status.ai.provider -match "Google Gemini") "AI is not using Google Gemini."
-}
 
 $options = @{
     language = "vie+eng"
@@ -64,7 +59,6 @@ $options = @{
     preserve_images = $true
     preserve_layout = $true
     detect_tables = $true
-    ai_assist = [bool]$AiAssist
 }
 $createBody = @{
     files = @(@{ name = $source.Name; size = $source.Length })
@@ -141,7 +135,6 @@ $report = [ordered]@{
     source_bytes = $source.Length
     job_id = $created.job_id
     result_file = $resultPath
-    ai_assist = [bool]$AiAssist
     controller_node = $status.runtime.controller.node
     worker_python = $status.runtime.worker.python
     worker_system = $status.runtime.worker.system

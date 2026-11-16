@@ -9,6 +9,7 @@ from typing import Any
 
 from docx import Document
 from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import Pt
 from docx.text.paragraph import Paragraph
 
@@ -228,20 +229,56 @@ def _repair_tabbed_image_headers(document) -> bool:
 
 
 def _normalize_layout_document(output_path: Path) -> None:
-    """Prevent a page footer from spilling onto a new Word page.
+    """Prevent page content from spilling onto a new Word page.
 
-    pdf2docx creates one section per PDF page. Large source bottom margins can
-    leave too little room for its absolutely positioned page content, so Word
-    may move the final footer paragraph to an otherwise blank next page.
+    pdf2docx creates one section per PDF page. Large margins and unconstrained
+    table/cell spacing can cause the last line of a page to spill over into an
+    otherwise blank next page.
     """
 
     document = Document(output_path)
     changed = _repair_tabbed_image_headers(document)
     for section in document.sections:
-        bottom_margin = section.bottom_margin
-        if bottom_margin is not None and bottom_margin.pt > 24.0:
-            section.bottom_margin = Pt(24.0)
+        if section.top_margin is not None and section.top_margin.pt > 18.0:
+            section.top_margin = Pt(18.0)
             changed = True
+        if section.bottom_margin is not None and section.bottom_margin.pt > 14.0:
+            section.bottom_margin = Pt(14.0)
+            changed = True
+
+    while document.paragraphs and not document.paragraphs[0].text.strip() and not document.paragraphs[0]._element.xpath(".//w:drawing"):
+        p_elem = document.paragraphs[0]._element
+        p_elem.getparent().remove(p_elem)
+        changed = True
+    while document.paragraphs and not document.paragraphs[-1].text.strip() and not document.paragraphs[-1]._element.xpath(".//w:drawing"):
+        p_elem = document.paragraphs[-1]._element
+        p_elem.getparent().remove(p_elem)
+        changed = True
+
+    for table in document.tables:
+        for trHeight in table._tbl.xpath(".//w:trHeight"):
+            trHeight.getparent().remove(trHeight)
+            changed = True
+        for row in table.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    p.paragraph_format.space_before = Pt(0)
+                    p.paragraph_format.space_after = Pt(0)
+                    p.paragraph_format.line_spacing = 1.0
+                    for r in p.runs:
+                        if r.font.size and r.font.size.pt > 11.0:
+                            r.font.size = Pt(10.0)
+                            changed = True
+
+    for p in document.paragraphs:
+        if p.paragraph_format.space_after and p.paragraph_format.space_after.pt > 2.0:
+            p.paragraph_format.space_after = Pt(1.5)
+            changed = True
+        for r in p.runs:
+            if r.font.size and r.font.size.pt > 14.0:
+                r.font.size = Pt(13.0)
+                changed = True
+
     if changed:
         document.save(output_path)
 

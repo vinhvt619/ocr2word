@@ -71,7 +71,6 @@ try {
         preserve_images = $true
         preserve_layout = $true
         detect_tables = $true
-        ai_assist = $false
     } | ConvertTo-Json -Compress
     $optionsContent = [Net.Http.StringContent]::new($options, [Text.Encoding]::UTF8)
     $multipart.Add($optionsContent, "options")

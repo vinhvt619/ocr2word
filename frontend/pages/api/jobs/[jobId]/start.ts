@@ -19,7 +19,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
   try {
     const shouldAnalyze = job.files.length === 1
       && PDF_EXTENSIONS.has(extensionOf(job.files[0].name))
-      && job.options.ocr_mode !== "text";
+      && job.options.ocr_mode !== "text"
+      && job.options.output_format !== "xlsx";
     const action: ConvertQueueMessage["action"] = shouldAnalyze ? "analyze" : "convert";
     await updateJob(jobId, {
       status: "queued",

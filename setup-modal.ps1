@@ -11,7 +11,6 @@ $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $pythonExe = Join-Path $projectRoot ".venv\Scripts\python.exe"
 $modalExe = Join-Path $projectRoot ".venv\Scripts\modal.exe"
 $requirementsFile = Join-Path $projectRoot "requirements-modal.txt"
-$localEnvFile = Join-Path $projectRoot ".env"
 $secretName = "ocr2word-secrets"
 
 function ConvertFrom-SecureValue {
@@ -22,27 +21,6 @@ function ConvertFrom-SecureValue {
     } finally {
         [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
     }
-}
-
-function Read-DotEnvValue {
-    param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$Name
-    )
-    if (-not (Test-Path -LiteralPath $Path)) { return $null }
-    foreach ($line in Get-Content -LiteralPath $Path) {
-        if ($line -match "^\s*$([Regex]::Escape($Name))\s*=\s*(.*)\s*$") {
-            $value = $Matches[1].Trim()
-            if ($value.Length -ge 2) {
-                if (($value[0] -eq '"' -and $value[$value.Length - 1] -eq '"') -or
-                    ($value[0] -eq "'" -and $value[$value.Length - 1] -eq "'")) {
-                    $value = $value.Substring(1, $value.Length - 2)
-                }
-            }
-            return $value
-        }
-    }
-    return $null
 }
 
 if (-not (Test-Path -LiteralPath $pythonExe)) {
@@ -97,26 +75,16 @@ if (-not $PublicSite) {
 
     $secretValues.OCR2WORD_BASIC_USER = $username
     $secretValues.OCR2WORD_BASIC_PASSWORD = $password
-}
-$geminiKey = Read-DotEnvValue -Path $localEnvFile -Name "GEMINI_API_KEY"
-$geminiModel = Read-DotEnvValue -Path $localEnvFile -Name "OCR2WORD_AI_MODEL"
-if (-not [string]::IsNullOrWhiteSpace($geminiKey)) {
-    $secretValues.GEMINI_API_KEY = $geminiKey
-    $secretValues.OCR2WORD_AI_MODEL = if ([string]::IsNullOrWhiteSpace($geminiModel)) {
-        "gemini-3.7-flash"
-    } else {
-        $geminiModel
-    }
-}
-if ([string]::IsNullOrWhiteSpace($geminiKey)) {
-    throw "GEMINI_API_KEY is missing from .env."
+} else {
+    $secretValues.OCR2WORD_BASIC_USER = ""
+    $secretValues.OCR2WORD_BASIC_PASSWORD = ""
 }
 
 $tempJson = Join-Path ([IO.Path]::GetTempPath()) ("ocr2word-modal-secret-{0}.json" -f [Guid]::NewGuid().ToString("N"))
 try {
     $json = $secretValues | ConvertTo-Json -Compress
     [IO.File]::WriteAllText($tempJson, $json, (New-Object Text.UTF8Encoding($false)))
-    Write-Host "Saving the private website credentials to Modal Secret..." -ForegroundColor Cyan
+    Write-Host "Saving website access settings to Modal Secret..." -ForegroundColor Cyan
     & $modalExe secret create $secretName --from-json $tempJson --force
     if ($LASTEXITCODE -ne 0) { throw "Modal Secret could not be saved." }
 } finally {
@@ -125,7 +93,6 @@ try {
     }
     $password = $null
     $passwordAgain = $null
-    $geminiKey = $null
     $json = $null
     $secretValues = $null
 }

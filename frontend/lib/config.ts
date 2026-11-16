@@ -12,6 +12,7 @@ export const OCR_CHUNK_TRIGGER_PAGES = 9;
 export const OCR_CHUNK_TARGET_SCAN_PAGES = 6;
 export const OCR_CHUNK_MAX_TOTAL_PAGES = 40;
 export const DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+export const XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 export const PDF_EXTENSIONS = new Set(["pdf"]);
 export const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"]);
@@ -57,9 +58,19 @@ export function safeDownloadStem(filename: string): string {
   return cleaned || "tai-lieu";
 }
 
-export function outputDetails(files: Array<{ name: string }>, aiAssist: boolean) {
+export function outputDetails(
+  files: Array<{ name: string }>,
+  outputFormat: "docx" | "xlsx" = "docx",
+) {
   if (files.length === 1) {
-    const suffix = aiAssist ? "-editable-ai.docx" : "-editable.docx";
+    if (outputFormat === "xlsx") {
+      return {
+        name: `${safeDownloadStem(files[0].name)}-editable.xlsx`,
+        extension: "xlsx",
+        contentType: XLSX_CONTENT_TYPE,
+      };
+    }
+    const suffix = "-editable.docx";
     return {
       name: `${safeDownloadStem(files[0].name)}${suffix}`,
       extension: "docx",

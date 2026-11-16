@@ -350,6 +350,47 @@ def extract_pdf_pages(
         source.close()
 
 
+_MATH_FONT_TOKENS = (
+    "cambriamath",
+    "cmmi",
+    "cmsy",
+    "cmex",
+    "msam",
+    "msbm",
+    "latinmodern-math",
+    "stixmath",
+    "asana-math",
+    "xits-math",
+    "mtmi",
+    "mtsy",
+    "mtex",
+    "euclidmath",
+)
+_MATH_SYMBOL_CHARS = frozenset("∫∬∭∮∑∏∐√∛∜∞≠≤≥≈≡±∓∂∇∈∉⊂⊆⊃⊇∪∩⇒⇔↦")
+_MATH_HINT_WARNING = (
+    "Phát hiện dấu hiệu ký hiệu hoặc font toán học trong PDF. Nếu công thức chỉ hiển thị dạng chữ rời "
+    "hoặc lệch chỉ số, hãy bật 'Nhận diện công thức toán' để dựng Word Equation có thể chỉnh sửa."
+)
+
+
+def _page_has_math_indicators(page) -> bool:
+    """Cheap heuristic to suggest enabling math_ocr when math fonts/symbols appear in a PDF text layer."""
+    try:
+        for font_info in page.get_fonts():
+            font_name = str(font_info[3] if len(font_info) > 3 else "").lower()
+            if any(token in font_name for token in _MATH_FONT_TOKENS):
+                return True
+    except Exception:
+        pass
+    try:
+        text = page.get_text("text", sort=False) or ""
+        if any(ch in _MATH_SYMBOL_CHARS for ch in text):
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def _write_ocr_page(
     doc,
     page,
@@ -372,6 +413,10 @@ def _write_ocr_page(
 
 def convert_pdf(input_path: Path, output_path: Path, options: ConversionOptions) -> ConversionResult:
     options.validate()
+    if options.math_ocr:
+        from .math_pipeline import convert_pdf_with_math
+
+        return convert_pdf_with_math(input_path, output_path, options)
     options.report_progress(2, "Đang mở và phân tích PDF…")
     if pymupdf is None:
         raise MissingDependencyError("Thiếu PyMuPDF. Hãy chạy setup.ps1 hoặc cài các gói trong requirements.txt.")
@@ -385,6 +430,8 @@ def convert_pdf(input_path: Path, output_path: Path, options: ConversionOptions)
 
     page_count = pdf.page_count
     result_warnings: list[str] = []
+    if any(_page_has_math_indicators(page) for page in pdf):
+        result_warnings.append(_MATH_HINT_WARNING)
     options.report_progress(5, f"Đã đọc {page_count} trang PDF.")
 
     use_layout_converter = (

@@ -15,6 +15,7 @@ export interface JobFile {
 }
 
 export interface JobOptions {
+  output_format?: "docx" | "xlsx";
   language: string;
   ocr_mode: "auto" | "force" | "text";
   dpi: number;
@@ -22,7 +23,8 @@ export interface JobOptions {
   preserve_images: boolean;
   preserve_layout: boolean;
   detect_tables: boolean;
-  ai_assist: boolean;
+  math_ocr?: boolean;
+  math_engine?: "rules" | "local_hybrid";
 }
 
 export interface JobRecord {
@@ -48,13 +50,11 @@ export interface JobRecord {
   ocr_page_count?: number;
   chunk_total?: number;
   chunk_completed?: number;
-  ai_input_pathname?: string | null;
-  ai_input_size?: number;
 }
 
 export interface ConvertQueueMessage {
   job_id: string;
-  action?: "analyze" | "convert" | "chunk" | "merge" | "ai";
+  action?: "analyze" | "convert" | "chunk" | "merge";
   chunk_index?: number;
 }
 

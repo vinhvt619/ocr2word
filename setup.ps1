@@ -61,4 +61,3 @@ Write-Host "Chạy ứng dụng bằng: .\run.ps1"
 if (-not $InstallTesseract) {
     Write-Host "Để OCR PDF scan chất lượng cao, chạy lại: .\setup.ps1 -InstallTesseract -OcrModel best" -ForegroundColor Yellow
 }
-Write-Host "Để bật Gemini AI, chạy: .\setup-gemini.ps1" -ForegroundColor Yellow

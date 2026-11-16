@@ -102,7 +102,7 @@ if (-not (Test-Path -LiteralPath $frontendEnvFile)) {
 & npm.cmd run sync-static --prefix $frontendRoot
 if ($LASTEXITCODE -ne 0) { throw "Static asset sync failed." }
 
-$forwardedEnvNames = @("OCR2WORD_INTERNAL_SECRET", "GEMINI_API_KEY", "OCR2WORD_AI_MODEL")
+$forwardedEnvNames = @("OCR2WORD_INTERNAL_SECRET")
 $previousForwardedValues = @{}
 Push-Location $projectRoot
 try {
@@ -149,7 +149,7 @@ try {
     Clear-NextDevCache
     Write-Host "Starting the same Services graph used by Vercel..." -ForegroundColor Green
     Write-Host "Open http://127.0.0.1:$Port" -ForegroundColor Green
-    Write-Host "This mode uses the real Development Blob, Queue, Redis and Google Gemini API." -ForegroundColor Yellow
+    Write-Host "This mode uses the real Development Blob, Queue and Redis." -ForegroundColor Yellow
     $devAttempt = 1
     while ($devAttempt -le 2) {
         $devStartedAt = Get-Date

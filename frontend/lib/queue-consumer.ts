@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { registerDevConsumer } from "@vercel/queue";
 
-import { errorMessage, validJobId } from "./api";
+import { errorMessage, normalizeOptions, validJobId } from "./api";
 import { createWorkerReadUrl, createWorkerWriteUrl, deleteBlobs } from "./blob";
 import {
   DOCX_CONTENT_TYPE,
@@ -30,8 +30,10 @@ class NonRetryableJobError extends Error {}
 class JobBusyError extends Error {}
 
 class WorkerResponseError extends Error {
-  constructor(message: string, readonly status: number) {
+  readonly status: number;
+  constructor(message: string, status: number) {
     super(message);
+    this.status = status;
   }
 }
 
@@ -100,16 +102,15 @@ function sourceFile(job: JobRecord, downloadUrl: string) {
   };
 }
 
-function stageLockScope(message: ConvertQueueMessage): string {
+export function stageLockScope(message: ConvertQueueMessage, job?: JobRecord): string {
+  if (job?.options?.output_format === "xlsx") {
+    return "job";
+  }
   return message.action === "chunk" ? `chunk-${message.chunk_index ?? "invalid"}` : (message.action || "convert");
 }
 
 function chunkPathname(jobId: string, index: number): string {
   return `ocr2word/${jobId}/intermediate/chunk-${String(index + 1).padStart(4, "0")}.docx`;
-}
-
-function aiInputPathname(jobId: string): string {
-  return `ocr2word/${jobId}/intermediate/before-ai.docx`;
 }
 
 export function planPdfChunks(
@@ -146,13 +147,8 @@ async function enqueue(message: ConvertQueueMessage, idempotencyKey: string): Pr
   });
 }
 
-function needsSeparateAi(job: JobRecord): boolean {
-  return job.options.ai_assist && job.files.length === 1 && job.output_content_type === DOCX_CONTENT_TYPE;
-}
-
 async function cleanupFinishedJob(job: JobRecord): Promise<void> {
   const pathnames = [...job.files.map((file) => file.pathname)];
-  if (job.ai_input_pathname) pathnames.push(job.ai_input_pathname);
   if (job.chunk_total) {
     const chunks = await getChunks(job.job_id, job.chunk_total);
     pathnames.push(...chunks.map((chunk) => chunk.pathname));
@@ -181,28 +177,11 @@ async function completeJob(
   await cleanupFinishedJob({ ...job, report });
 }
 
-async function queueAiStage(
-  job: JobRecord,
-  inputPathname: string,
-  inputSize: number,
-  report: Array<Record<string, unknown>>,
-): Promise<void> {
-  if (inputSize < 1) throw new Error("Container OCR không trả về kích thước Word trung gian hợp lệ.");
-  await addCleanupPathnames(job.job_id, [inputPathname]);
-  await updateJob(job.job_id, {
-    status: "queued",
-    percent: 88,
-    message: "Đã tạo Word; đang chờ AI hiệu đính phần chữ…",
-    current_file: job.files[0]?.name ?? null,
-    report,
-    ai_input_pathname: inputPathname,
-    ai_input_size: inputSize,
-    error: null,
-  });
-  await enqueue({ job_id: job.job_id, action: "ai" }, `${job.job_id}:ai`);
-}
-
 async function processAnalyze(job: JobRecord): Promise<void> {
+  if (job.options.output_format === "xlsx") {
+    await processLegacy(job);
+    return;
+  }
   if (job.files.length !== 1) throw new NonRetryableJobError("Luồng phân tích chỉ nhận một file PDF.");
   if (job.pipeline === "chunked_pdf" && job.chunk_total) {
     const chunks = await getChunks(job.job_id, job.chunk_total);
@@ -227,7 +206,7 @@ async function processAnalyze(job: JobRecord): Promise<void> {
   const payload = await callWorker("/internal/analyze-pdf", {
     job_id: job.job_id,
     file: sourceFile(job, downloadUrl),
-    options: { ...job.options, ai_assist: false },
+    options: job.options,
   });
   const pageCount = finiteInteger(payload.page_count);
   const ocrPages = Array.isArray(payload.ocr_pages)
@@ -280,9 +259,6 @@ async function processAnalyze(job: JobRecord): Promise<void> {
 }
 
 async function processLegacy(job: JobRecord): Promise<void> {
-  const separateAi = needsSeparateAi(job);
-  const targetPathname = separateAi ? aiInputPathname(job.job_id) : job.output_pathname;
-  if (separateAi) await addCleanupPathnames(job.job_id, [targetPathname]);
   await updateJob(job.job_id, {
     pipeline: "legacy",
     status: "processing",
@@ -291,7 +267,7 @@ async function processLegacy(job: JobRecord): Promise<void> {
     error: null,
   });
   const inputUrls = await Promise.all(job.files.map((file) => createWorkerReadUrl(file.pathname)));
-  const outputUrl = await createWorkerWriteUrl(targetPathname, job.output_content_type, MAX_TOTAL_BYTES);
+  const outputUrl = await createWorkerWriteUrl(job.output_pathname, job.output_content_type, MAX_TOTAL_BYTES);
   const payload = await callWorker("/internal/convert", {
     job_id: job.job_id,
     files: job.files.map((file, index) => ({
@@ -300,20 +276,16 @@ async function processLegacy(job: JobRecord): Promise<void> {
       content_type: file.content_type,
       download_url: inputUrls[index],
     })),
-    options: separateAi ? { ...job.options, ai_assist: false } : job.options,
+    options: job.options,
     output: {
-      name: separateAi ? "before-ai.docx" : job.output_name,
+      name: job.output_name,
       content_type: job.output_content_type,
       upload_url: outputUrl,
     },
     notify_progress: true,
   });
   const report = reportItems(payload);
-  if (separateAi) {
-    await queueAiStage(job, targetPathname, finiteInteger(payload.output_size), report);
-  } else {
-    await completeJob(job, report);
-  }
+  await completeJob(job, report);
 }
 
 async function maybeQueueMerge(job: JobRecord): Promise<void> {
@@ -344,7 +316,7 @@ async function processChunk(job: JobRecord, chunkIndex: number): Promise<void> {
   const payload = await callWorker("/internal/convert", {
     job_id: job.job_id,
     files: [sourceFile(job, sourceUrl)],
-    options: { ...job.options, ai_assist: false },
+    options: job.options,
     output: {
       name: `part-${chunk.index + 1}.docx`,
       content_type: DOCX_CONTENT_TYPE,
@@ -394,17 +366,12 @@ function combinedChunkReport(job: JobRecord, chunks: PdfChunkRecord[]): Array<Re
     ],
     pages: job.source_page_count ?? null,
     tables: tableCount,
-    ai: null,
   }];
 }
 
 async function processMerge(job: JobRecord): Promise<void> {
   if (job.pipeline !== "chunked_pdf" || !job.chunk_total) {
     throw new NonRetryableJobError("Job không có các phần PDF để ghép.");
-  }
-  if (needsSeparateAi(job) && job.ai_input_pathname && job.ai_input_size) {
-    await enqueue({ job_id: job.job_id, action: "ai" }, `${job.job_id}:ai`);
-    return;
   }
   const chunks = (await getChunks(job.job_id, job.chunk_total)).sort((a, b) => a.index - b.index);
   if (chunks.length !== job.chunk_total || chunks.some((chunk) => chunk.status !== "complete" || chunk.size < 1)) {
@@ -417,12 +384,9 @@ async function processMerge(job: JobRecord): Promise<void> {
     current_file: job.files[0].name,
     error: null,
   });
-  const separateAi = needsSeparateAi(job);
-  const targetPathname = separateAi ? aiInputPathname(job.job_id) : job.output_pathname;
-  if (separateAi) await addCleanupPathnames(job.job_id, [targetPathname]);
   const partUrls = await Promise.all(chunks.map((chunk) => createWorkerReadUrl(chunk.pathname)));
-  const outputUrl = await createWorkerWriteUrl(targetPathname, DOCX_CONTENT_TYPE, MAX_TOTAL_BYTES);
-  const payload = await callWorker("/internal/merge-docx", {
+  const outputUrl = await createWorkerWriteUrl(job.output_pathname, DOCX_CONTENT_TYPE, MAX_TOTAL_BYTES);
+  await callWorker("/internal/merge-docx", {
     job_id: job.job_id,
     parts: chunks.map((chunk, index) => ({
       name: `part-${chunk.index + 1}.docx`,
@@ -431,69 +395,30 @@ async function processMerge(job: JobRecord): Promise<void> {
       download_url: partUrls[index],
     })),
     output: {
-      name: separateAi ? "before-ai.docx" : job.output_name,
-      content_type: DOCX_CONTENT_TYPE,
-      upload_url: outputUrl,
-    },
-  });
-  const report = combinedChunkReport(job, chunks);
-  if (separateAi) {
-    await queueAiStage(job, targetPathname, finiteInteger(payload.output_size), report);
-  } else {
-    await completeJob(job, report);
-  }
-}
-
-async function processAi(job: JobRecord): Promise<void> {
-  if (!job.ai_input_pathname || !job.ai_input_size) {
-    throw new NonRetryableJobError("Không tìm thấy bản Word trung gian cho bước AI.");
-  }
-  await updateJob(job.job_id, {
-    status: "processing",
-    percent: 89,
-    message: "AI đang hiệu đính lỗi dấu và từ bị dính; định dạng Word được giữ nguyên…",
-    current_file: job.files[0]?.name ?? null,
-    error: null,
-  });
-  const inputUrl = await createWorkerReadUrl(job.ai_input_pathname);
-  const outputUrl = await createWorkerWriteUrl(job.output_pathname, DOCX_CONTENT_TYPE, MAX_TOTAL_BYTES);
-  const payload = await callWorker("/internal/ai-assist", {
-    job_id: job.job_id,
-    file: {
-      name: "before-ai.docx",
-      size: job.ai_input_size,
-      content_type: DOCX_CONTENT_TYPE,
-      download_url: inputUrl,
-    },
-    output: {
       name: job.output_name,
       content_type: DOCX_CONTENT_TYPE,
       upload_url: outputUrl,
     },
   });
-  const warnings = Array.isArray(payload.warnings) ? payload.warnings.map(String) : [];
-  const report = job.report.length ? job.report.map((item, index) => index === 0 ? {
-    ...item,
-    warnings: [...(Array.isArray(item.warnings) ? item.warnings : []), ...warnings],
-    ai: payload.ai && typeof payload.ai === "object" ? payload.ai : null,
-  } : item) : [{
-    file: job.files[0]?.name ?? "tài liệu",
-    status: "success",
-    output: job.output_name,
-    warnings,
-    ai: payload.ai && typeof payload.ai === "object" ? payload.ai : null,
-  }];
-  const fallback = payload.fallback === true;
-  await completeJob(
-    job,
-    report,
-    fallback
-      ? "Đã tạo Word; AI tạm thời không khả dụng nên nội dung OCR được giữ nguyên."
-      : "Đã chuyển đổi và hiệu đính AI xong. Kết quả sẵn sàng để tải xuống.",
-  );
+  const report = combinedChunkReport(job, chunks);
+  await completeJob(job, report);
 }
 
-async function runStage(message: ConvertQueueMessage, job: JobRecord): Promise<void> {
+export async function runStage(message: ConvertQueueMessage, job: JobRecord): Promise<void> {
+  if (job.options.output_format === "xlsx") {
+    if (message.action === "chunk" || message.action === "merge") {
+      throw new NonRetryableJobError(`Tác vụ '${message.action}' không được hỗ trợ cho định dạng xuất Excel (.xlsx).`);
+    }
+  }
+  // Rebuild the worker options from the current schema for jobs created before this release.
+  const engine = job.options.math_engine;
+  job = {
+    ...job,
+    options: normalizeOptions({
+      ...job.options,
+      math_engine: engine === "local_hybrid" || engine === "rules" ? engine : undefined,
+    }),
+  };
   switch (message.action || "convert") {
     case "analyze":
       return processAnalyze(job);
@@ -503,8 +428,6 @@ async function runStage(message: ConvertQueueMessage, job: JobRecord): Promise<v
       return processChunk(job, message.chunk_index ?? -1);
     case "merge":
       return processMerge(job);
-    case "ai":
-      return processAi(job);
     default:
       throw new NonRetryableJobError("Hành động hàng đợi không hợp lệ.");
   }
@@ -515,7 +438,7 @@ export async function processConversionJob(message: ConvertQueueMessage, deliver
   const job = await getJob(message.job_id);
   if (!job || job.status === "complete") return;
   const lockToken = randomUUID();
-  const scope = stageLockScope(message);
+  const scope = stageLockScope(message, job);
   if (!await acquireJobLock(job.job_id, lockToken, scope)) {
     throw new JobBusyError("Giai đoạn này đang được một worker khác xử lý.");
   }

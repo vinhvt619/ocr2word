@@ -1,0 +1,15 @@
+# Optional local math OCR dependencies (CPU-only PyTorch + pix2tex v0.0.1).
+# Install CPU PyTorch first on Windows/Linux to avoid pulling CUDA wheels:
+#   pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2,<3" "torchvision>=0.17,<1"
+#   pip install --no-deps pix2tex==0.1.4
+#   pip install -r requirements-math-local.txt
+einops>=0.3.0
+munch>=2.5.0
+# Tokenizer adapter version exercised by local integration tests.
+transformers==5.20.2
+tokenizers>=0.23.1,<0.24
+timm==0.5.4
+x-transformers==0.15.0
+entmax>=1.0
+pyyaml>=6.0
+tqdm>=4.47.0

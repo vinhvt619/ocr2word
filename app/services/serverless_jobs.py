@@ -21,12 +21,6 @@ from app.converters import (
     convert_image,
     convert_pdf,
 )
-from app.services.ai_assist import (
-    AiAssistError,
-    apply_ai_assistance_to_docx,
-    get_ai_engine_info,
-    resolve_ai_model,
-)
 
 
 PDF_EXTENSIONS = {".pdf"}
@@ -48,6 +42,7 @@ ProgressCallback = Callable[[int, str, str | None, int, str], None]
 class ServerlessConversionOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    output_format: Literal["docx", "xlsx"] = "docx"
     language: Literal["vie", "eng", "vie+eng", "eng+vie"] = "vie"
     ocr_mode: Literal["auto", "force", "text"] = "auto"
     dpi: Literal[200, 300, 400] = 300
@@ -55,7 +50,8 @@ class ServerlessConversionOptions(BaseModel):
     preserve_images: bool = True
     preserve_layout: bool = True
     detect_tables: bool = True
-    ai_assist: bool = False
+    math_ocr: bool = False
+    math_engine: Literal["rules", "local_hybrid"] | None = None
 
 
 @dataclass(frozen=True)
@@ -131,6 +127,9 @@ def _validate_signature(path: Path, suffix: str) -> None:
 
 
 def _convert_one(input_path: Path, output_path: Path, options: ConversionOptions) -> ConversionResult:
+    if options.output_format == "xlsx":
+        from app.converters import convert_to_excel
+        return convert_to_excel(input_path, output_path, options)
     suffix = input_path.suffix.lower()
     if suffix in PDF_EXTENSIONS:
         return convert_pdf(input_path, output_path, options)
@@ -145,10 +144,15 @@ def _package_results(
     work_dir: Path,
 ) -> tuple[Path, str, str]:
     if len(report) == 1 and len(successes) == 1:
+        media_type = (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            if successes[0][0].suffix.lower() == ".xlsx"
+            else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
         return (
             successes[0][0],
             successes[0][1],
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            media_type,
         )
 
     output_name = "ocr2word-ket-qua.zip"
@@ -216,6 +220,10 @@ def run_serverless_conversion(
                 raise ConversionError("Tổng dung lượng tải lên lớn hơn giới hạn 90 MB của Modal.")
 
             suffix = Path(original_name).suffix.lower()
+            if option_data.output_format == "xlsx" and suffix in EXCEL_EXTENSIONS:
+                raise ConversionError(
+                    "Chuyển đổi sang Excel (.xlsx) chỉ nhận file PDF hoặc hình ảnh (không nhận file Excel làm đầu vào)."
+                )
             if suffix not in ALLOWED_EXTENSIONS:
                 raise ConversionError(
                     f"'{original_name}' không được hỗ trợ. Chỉ nhận PDF, hình ảnh và Excel."
@@ -234,7 +242,12 @@ def run_serverless_conversion(
                 status="uploading",
             )
 
+        if option_data.output_format == "xlsx":
+            if option_data.math_ocr:
+                raise ConversionError("Chuyển đổi sang Excel (.xlsx) không hỗ trợ tính năng nhận diện công thức toán.")
+
         options = ConversionOptions(
+            output_format=option_data.output_format,
             language=option_data.language,
             ocr_mode=option_data.ocr_mode,
             dpi=option_data.dpi,
@@ -242,32 +255,24 @@ def run_serverless_conversion(
             preserve_images=option_data.preserve_images,
             preserve_layout=option_data.preserve_layout,
             detect_tables=option_data.detect_tables,
+            math_ocr=option_data.math_ocr,
+            math_engine=option_data.math_engine,
         )
         options.validate()
-
-        ai_model: str | None = None
-        ai_unavailable_warning: str | None = None
-        if option_data.ai_assist:
-            ai_model = resolve_ai_model()
-            ai_engine = get_ai_engine_info()
-            if not ai_engine.available:
-                ai_model = None
-                ai_unavailable_warning = (
-                    f"Không thể dùng AI ở lần này ({ai_engine.message}); "
-                    "đã trả lại bản Word OCR chưa hiệu đính."
-                )
 
         successes: list[tuple[Path, str]] = []
         report: list[dict[str, object]] = []
         used_output_names: set[str] = set()
         for file_index, (input_path, original_name) in enumerate(saved_inputs):
-            output_suffix = "-editable-ai.docx" if option_data.ai_assist else "-editable.docx"
+            if option_data.output_format == "xlsx":
+                output_suffix = "-editable.xlsx"
+            else:
+                output_suffix = "-editable.docx"
             output_name = _unique_name(
                 f"{_safe_stem(original_name)}{output_suffix}",
                 used_output_names,
             )
             output_path = output_dir / output_name
-            conversion_share = 0.78 if ai_model else 1.0
 
             def file_progress(file_fraction: float, message: str) -> None:
                 overall = 30 + ((file_index + file_fraction) / len(saved_inputs)) * 64
@@ -281,7 +286,7 @@ def run_serverless_conversion(
                 )
 
             def converter_progress(local_percent: int, message: str) -> None:
-                file_progress((local_percent / 100) * conversion_share, message)
+                file_progress(local_percent / 100, message)
 
             try:
                 result = _convert_one(
@@ -289,43 +294,6 @@ def run_serverless_conversion(
                     output_path,
                     replace(options, progress_callback=converter_progress),
                 )
-                ai_summary: dict[str, object] | None = None
-                if option_data.ai_assist and ai_model:
-
-                    def ai_progress(local_percent: int, message: str) -> None:
-                        file_progress(
-                            conversion_share + (local_percent / 100) * (1 - conversion_share),
-                            message,
-                        )
-
-                    try:
-                        ai_result = apply_ai_assistance_to_docx(
-                            result.output_path,
-                            model=ai_model,
-                            progress_callback=ai_progress,
-                        )
-                        ai_summary = ai_result.to_dict()
-                        result.warnings.append(
-                            f"AI đã kiểm tra {ai_result.processed_paragraphs} đoạn và sửa "
-                            f"{ai_result.changed_paragraphs} đoạn chữ."
-                        )
-                        if ai_result.rejected_changes:
-                            result.warnings.append(
-                                f"Đã giữ nguyên {ai_result.rejected_changes} đề xuất AI vì thay đổi "
-                                "quá nhiều hoặc làm khác số liệu."
-                            )
-                        if ai_result.skipped_paragraphs:
-                            result.warnings.append(
-                                f"AI đã bỏ qua {ai_result.skipped_paragraphs} đoạn quá dài hoặc "
-                                "vượt giới hạn an toàn."
-                            )
-                    except AiAssistError as exc:
-                        result.warnings.append(
-                            f"AI tạm thời không hiệu đính được ({exc}); đã giữ nguyên bản Word OCR."
-                        )
-                elif ai_unavailable_warning:
-                    result.warnings.append(ai_unavailable_warning)
-
                 successes.append((result.output_path, output_name))
                 report.append(
                     {
@@ -336,10 +304,10 @@ def run_serverless_conversion(
                         "pages": result.page_count,
                         "sheets": result.sheet_count,
                         "tables": result.table_count,
-                        "ai": ai_summary,
+                        "math": result.math_report(),
                     }
                 )
-            except (ConversionError, AiAssistError) as exc:
+            except ConversionError as exc:
                 report.append({"file": original_name, "status": "error", "message": str(exc)})
             except Exception as exc:
                 report.append(

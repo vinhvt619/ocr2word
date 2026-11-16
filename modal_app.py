@@ -21,24 +21,16 @@ from fastapi.staticfiles import StaticFiles
 PROJECT_ROOT = Path(__file__).resolve().parent
 STATIC_DIR = PROJECT_ROOT / "app" / "static"
 REQUIREMENTS_PATH = PROJECT_ROOT / "requirements.txt"
+MATH_LOCAL_REQUIREMENTS_PATH = PROJECT_ROOT / "requirements-math-local.txt"
 APP_NAME = "ocr2word"
 SECRET_NAME = "ocr2word-secrets"
 JOB_STORE_NAME = "ocr2word-jobs"
 JOB_TTL_SECONDS = 7 * 24 * 60 * 60
 JOB_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
-ALLOWED_EXTENSIONS = {
-    ".pdf",
-    ".xlsx",
-    ".xlsm",
-    ".xls",
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".tif",
-    ".tiff",
-    ".bmp",
-    ".webp",
-}
+PDF_EXTENSIONS = {".pdf"}
+EXCEL_EXTENSIONS = {".xlsx", ".xlsm", ".xls"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
+ALLOWED_EXTENSIONS = PDF_EXTENSIONS | EXCEL_EXTENSIONS | IMAGE_EXTENSIONS
 MAX_FILES = 20
 MAX_FILE_BYTES = 80 * 1024 * 1024
 MAX_TOTAL_BYTES = 90 * 1024 * 1024
@@ -46,10 +38,7 @@ READ_CHUNK_SIZE = 1024 * 1024
 
 
 app = modal.App(APP_NAME)
-runtime_secret = modal.Secret.from_name(
-    SECRET_NAME,
-    required_keys=["GEMINI_API_KEY"],
-)
+runtime_secret = modal.Secret.from_name(SECRET_NAME)
 jobs = modal.Dict.from_name(JOB_STORE_NAME, create_if_missing=True)
 
 worker_image = (
@@ -62,7 +51,30 @@ worker_image = (
         "libgomp1",
     )
     .pip_install_from_requirements(REQUIREMENTS_PATH)
-    .add_local_python_source("app")
+    .run_commands(
+        "pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu 'torch>=2.2,<3' 'torchvision>=0.17,<1'",
+        "pip install --no-cache-dir --no-deps pix2tex==0.1.4",
+    )
+    .pip_install_from_requirements(MATH_LOCAL_REQUIREMENTS_PATH)
+    .run_commands(
+        # Fail the image build on missing/incompatible inference imports rather
+        # than discovering a workstation-only dependency at the first upload.
+        "python -c \"from transformers import PreTrainedTokenizerFast; from pix2tex.models import get_model; from pix2tex.utils import parse_args, post_process, token2str\""
+    )
+    .env(
+        {
+            "NO_ALBUMENTATIONS_UPDATE": "1",
+            "OCR2WORD_MATH_MODEL_DIR": "/opt/ocr2word-models/pix2tex",
+        }
+    )
+    # The following build command imports app to download verified weights.
+    # Its sources must exist at build time, not only at container startup.
+    .add_local_python_source("app", copy=True)
+    .run_commands(
+        # Modal copies Python sources under /root. Unlike function execution,
+        # a plain image-builder Python process does not add it to sys.path.
+        "PYTHONPATH=/root python -c \"from pathlib import Path; from app.converters.math_local import download_and_verify_local_math_checkpoints; download_and_verify_local_math_checkpoints(Path('/opt/ocr2word-models/pix2tex'))\""
+    )
 )
 
 web_image = (
@@ -249,8 +261,6 @@ def create_web_app():
     async def status() -> dict[str, object]:
         from app import __version__
 
-        ai_key_available = bool(os.environ.get("GEMINI_API_KEY", "").strip())
-        ai_model = os.environ.get("OCR2WORD_AI_MODEL", "gemini-3.7-flash").strip()
         return {
             "app": "OCR2Word",
             "version": __version__,
@@ -260,15 +270,25 @@ def create_web_app():
                 "message": "Tesseract OCR chạy trong container Modal theo yêu cầu.",
                 "languages": ["vie", "eng"],
             },
-            "ai": {
-                "available": ai_key_available,
-                "provider": "Google Gemini API",
-                "model": ai_model,
-                "message": (
-                    f"Google Gemini sẵn sàng với model {ai_model}."
-                    if ai_key_available
-                    else "Chưa cấu hình GEMINI_API_KEY trong Modal Secret."
-                ),
+            "math_ocr": {
+                "default_when_enabled": "local_hybrid",
+                "engines": {
+                    "local_hybrid": {
+                        "available": True,
+                        "configured": True,
+                        "weights_ready": True,
+                        "uses_local_model": True,
+                        "model_name": "pix2tex",
+                        "revision": "v0.0.1",
+                        "reason": "Mô hình công thức cục bộ đã đóng gói sẵn trong Modal worker container.",
+                    },
+                    "rules": {
+                        "available": True,
+                        "configured": True,
+                        "weights_ready": True,
+                        "uses_local_model": False,
+                    },
+                },
             },
             "formats": sorted(ALLOWED_EXTENSIONS),
             "limits": {
@@ -308,11 +328,23 @@ def create_web_app():
         except (json.JSONDecodeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail="Tùy chọn chuyển đổi không hợp lệ.") from exc
 
+        output_format = str(option_payload.get("output_format", "docx")).lower()
+        if output_format not in {"docx", "xlsx"}:
+            raise HTTPException(status_code=400, detail="Định dạng xuất không hợp lệ (chỉ hỗ trợ docx hoặc xlsx).")
+        if output_format == "xlsx":
+            if option_payload.get("math_ocr"):
+                raise HTTPException(status_code=400, detail="Chuyển đổi sang Excel (.xlsx) không hỗ trợ tính năng nhận diện công thức toán.")
+
         uploaded: list[dict[str, object]] = []
         total_size = 0
         for upload in files:
             original_name = upload.filename or "tai-lieu"
             suffix = Path(original_name).suffix.lower()
+            if output_format == "xlsx" and suffix in EXCEL_EXTENSIONS:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Chuyển đổi sang Excel (.xlsx) chỉ nhận file PDF hoặc hình ảnh (không nhận file Excel làm đầu vào).",
+                )
             if suffix not in ALLOWED_EXTENSIONS:
                 raise HTTPException(
                     status_code=400,
@@ -541,7 +573,8 @@ def web():
 def smoke_test(
     file: str,
     output_dir: str = "output/modal-smoke",
-    ai_assist: bool = False,
+    math_ocr: bool = False,
+    math_engine: str = "local_hybrid",
 ) -> None:
     source = Path(file).expanduser().resolve()
     if not source.is_file():
@@ -576,7 +609,8 @@ def smoke_test(
             "preserve_images": True,
             "preserve_layout": True,
             "detect_tables": True,
-            "ai_assist": ai_assist,
+            "math_ocr": math_ocr,
+            "math_engine": math_engine,
         },
     )
     target_dir = Path(output_dir).resolve()

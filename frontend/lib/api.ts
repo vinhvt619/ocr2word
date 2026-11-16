@@ -43,7 +43,25 @@ export function normalizeOptions(value: unknown): JobOptions {
   const booleanValue = (key: string, fallback: boolean) => (
     typeof source[key] === "boolean" ? source[key] as boolean : fallback
   );
+  const rawOutputFormat = source.output_format ? String(source.output_format).toLowerCase() : "docx";
+  if (!["docx", "xlsx"].includes(rawOutputFormat)) {
+    throw new Error("Định dạng xuất không hợp lệ (chỉ hỗ trợ docx hoặc xlsx).");
+  }
+  const outputFormat = rawOutputFormat as "docx" | "xlsx";
+  const mathOcr = booleanValue("math_ocr", false);
+  const rawMathEngine = source.math_engine ? String(source.math_engine) : undefined;
+  if (rawMathEngine && !["rules", "local_hybrid"].includes(rawMathEngine)) {
+    throw new Error("Công cụ nhận diện toán không hợp lệ.");
+  }
+
+  if (outputFormat === "xlsx") {
+    if (mathOcr) {
+      throw new Error("Chuyển đổi sang Excel (.xlsx) không hỗ trợ tính năng nhận diện công thức toán.");
+    }
+  }
+
   return {
+    output_format: outputFormat,
     language,
     ocr_mode: String(ocrMode ?? "auto") as JobOptions["ocr_mode"],
     dpi,
@@ -51,7 +69,8 @@ export function normalizeOptions(value: unknown): JobOptions {
     preserve_images: booleanValue("preserve_images", true),
     preserve_layout: booleanValue("preserve_layout", true),
     detect_tables: booleanValue("detect_tables", true),
-    ai_assist: booleanValue("ai_assist", false),
+    math_ocr: mathOcr,
+    ...(rawMathEngine ? { math_engine: rawMathEngine as "rules" | "local_hybrid" } : {}),
   };
 }
 

@@ -4,7 +4,6 @@
 .env
 .env.*
 .agents
-.codex-test-temp
 .test-tmp*
 .pytest_cache
 artifacts
@@ -16,6 +15,7 @@ tests
 frontend/node_modules
 frontend/.next
 frontend/*.tsbuildinfo
+*.bak
 *.docx
 *.pdf
 *.png

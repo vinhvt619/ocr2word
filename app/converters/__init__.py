@@ -41,6 +41,12 @@ def convert_image(input_path: Path, output_path: Path, options: ConversionOption
 
     return convert_image_impl(input_path, output_path, options)
 
+
+def convert_to_excel(input_path: Path, output_path: Path, options: ConversionOptions) -> ConversionResult:
+    from .to_excel import convert_to_excel as convert_to_excel_impl
+
+    return convert_to_excel_impl(input_path, output_path, options)
+
 __all__ = [
     "ConversionError",
     "ConversionOptions",
@@ -49,5 +55,6 @@ __all__ = [
     "convert_excel",
     "convert_image",
     "convert_pdf",
+    "convert_to_excel",
     "extract_pdf_pages",
 ]

@@ -19,7 +19,6 @@ DEFAULT_OPTIONS = {
     "preserve_images": True,
     "preserve_layout": True,
     "detect_tables": True,
-    "ai_assist": False,
 }
 
 

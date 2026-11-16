@@ -3,7 +3,7 @@ from __future__ import annotations
 from bisect import bisect_right
 from dataclasses import dataclass
 from statistics import median
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt
@@ -553,6 +553,8 @@ def detect_raster_tables(
     words: list[dict[str, Any]],
     requested_language: str | None = None,
     warnings: list[str] | None = None,
+    fill_sequences: bool = True,
+    candidate_limit_checker: Callable[[int, int], None] | None = None,
 ) -> list[RasterTable]:
     candidates, vertical_mask, horizontal_mask = _table_candidates(image)
     if not candidates:
@@ -562,6 +564,8 @@ def detect_raster_tables(
     for x_lines, y_lines in candidates:
         rows = len(y_lines) - 1
         columns = len(x_lines) - 1
+        if candidate_limit_checker is not None:
+            candidate_limit_checker(rows, columns)
         merges, canonical = _merge_map(x_lines, y_lines, vertical_mask, horizontal_mask)
         page_grouped = _group_table_words(words, x_lines, y_lines, canonical)
         clean_grouped: dict[tuple[int, int], list[dict[str, Any]]] = {}
@@ -584,8 +588,9 @@ def detect_raster_tables(
                 page_grouped.get(anchor, []),
                 clean_grouped.get(anchor, []),
             )
-        _fill_missing_stt_sequence(cells)
-        _fill_missing_step_sequence(cells, merges)
+        if fill_sequences:
+            _fill_missing_stt_sequence(cells)
+            _fill_missing_step_sequence(cells, merges)
         tables.append(
             RasterTable(
                 bbox=(x_lines[0], y_lines[0], x_lines[-1], y_lines[-1]),
