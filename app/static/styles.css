@@ -41,6 +41,11 @@
 
 html {
   scroll-behavior: smooth;
+  zoom: 0.9;
+}
+
+html:has(#settingsDialog[open]) {
+  overflow: hidden;
 }
 
 body {
@@ -88,10 +93,71 @@ button {
 .topbar {
   width: min(1200px, calc(100% - 48px));
   margin: 0 auto;
-  height: 80px;
+  min-height: 80px;
   display: flex;
+  gap: 12px;
   align-items: center;
   justify-content: space-between;
+}
+
+.settings-button, .settings-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 13px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-body);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.settings-button {
+  flex: none;
+  border-color: #bfdbfe;
+  background: var(--primary-light);
+  color: var(--primary-hover);
+  white-space: nowrap;
+}
+
+.settings-button:hover:not(:disabled) {
+  border-color: var(--border-focus);
+  background: #dbeafe;
+}
+
+.settings-close:hover {
+  border-color: var(--border-focus);
+  color: var(--primary);
+}
+
+.settings-button:focus-visible, .settings-close:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.settings-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.settings-button svg, .settings-close svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.settings-button circle {
+  fill: var(--primary-light);
+}
+
+.settings-button:hover:not(:disabled) circle {
+  fill: #dbeafe;
 }
 
 .brand {
@@ -268,16 +334,12 @@ main {
   stroke-linejoin: round;
 }
 
-/* Two-Column Shell Layout */
 .converter-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(360px, 1.05fr);
-  gap: 28px;
-  margin-top: 10px;
-  align-items: start;
+  width: min(880px, 100%);
+  margin: 10px auto 0;
 }
 
-.converter-main, .settings-panel {
+.converter-main {
   background: var(--bg-card);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-xl);
@@ -289,44 +351,17 @@ main {
 .section-heading {
   display: flex;
   align-items: center;
-  gap: 14px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
   margin-bottom: 22px;
 }
-.section-heading.compact {
-  margin-bottom: 20px;
-}
-
-.step-number {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
-  background: var(--primary-light);
-  color: var(--primary);
-  font-size: 14px;
-  font-weight: 800;
-  border: 1px solid #bfdbfe;
-}
-
 .section-heading h2 {
   margin: 0;
   font-size: 20px;
   font-weight: 700;
   color: var(--text-main);
   letter-spacing: -0.3px;
-}
-
-.heading-text-wrap {
-  flex: 1;
-  min-width: 0;
-}
-
-.settings-title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
 }
 
 .saved-indicator {
@@ -506,6 +541,10 @@ main {
 }
 
 .text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
   background: transparent;
   border: 0;
   color: var(--danger);
@@ -594,6 +633,13 @@ main {
   color: var(--danger);
   background: var(--danger-light);
 }
+.text-button svg, .remove-file svg, .add-more svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+}
+
 .remove-file svg {
   width: 18px;
   height: 18px;
@@ -614,6 +660,12 @@ main {
   font-weight: 700;
   cursor: pointer;
 }
+.add-more svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
 .add-more:hover {
   background: #e2e8f0;
 }
@@ -875,13 +927,65 @@ main {
   line-height: 1.5;
 }
 
-/* ========================================================
-   RIGHT COLUMN: SETTINGS PANEL
-   ======================================================== */
+/* Settings dialog */
 .settings-panel {
+  position: fixed;
+  width: min(620px, calc(100% - 32px));
+  max-width: none;
+  max-height: calc(100dvh - 44px);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-xl);
+  background: var(--bg-card);
+  color: var(--text-body);
+  box-shadow: var(--shadow-lg);
+}
+
+.settings-panel[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-panel::backdrop {
+  background: rgb(15 23 42 / 45%);
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.settings-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.settings-title-row h2 {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 20px;
+  letter-spacing: -0.3px;
+}
+
+.settings-close {
+  width: 40px;
+  padding: 0;
+}
+
+.settings-content {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  padding: 20px 24px 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* Quick Presets Toolbar */
@@ -1408,9 +1512,6 @@ footer strong {
 
 /* Responsive Breakpoints */
 @media (max-width: 960px) {
-  .converter-shell {
-    grid-template-columns: 1fr;
-  }
   .workflow-grid {
     grid-template-columns: 1fr;
   }
@@ -1421,13 +1522,17 @@ footer strong {
     width: min(100% - 28px, 1200px);
   }
   .topbar {
-    height: 68px;
+    min-height: 68px;
+    padding: 8px 0;
   }
   .brand-text small {
     display: none;
   }
-  .converter-main, .settings-panel {
+  .converter-main {
     padding: 22px 18px;
+  }
+  .settings-header, .settings-content {
+    padding-inline: 16px;
   }
   .setting-grid-2 {
     grid-template-columns: 1fr;

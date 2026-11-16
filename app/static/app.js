@@ -31,6 +31,8 @@ const elements = {
   resultDetails: document.querySelector("#resultDetails"),
   downloadAgain: document.querySelector("#downloadAgain"),
   engineStatus: document.querySelector("#engineStatus"),
+  openSettings: document.querySelector("#openSettings"),
+  settingsDialog: document.querySelector("#settingsDialog"),
   ocrInfo: document.querySelector("#ocrInfo"),
   forceOcr: document.querySelector("#forceOcr"),
   outputDocx: document.querySelector("#outputDocx"),
@@ -145,6 +147,7 @@ function updateBusyControls() {
   const deploymentUnavailable = state.status?.deployment?.mode === "vercel"
     && state.status.deployment.available === false;
   const isXlsx = state.outputFormat === "xlsx";
+  elements.openSettings.disabled = state.busy;
   elements.fileInput.disabled = state.busy;
   elements.clearFiles.disabled = state.busy;
   elements.addMore.disabled = state.busy;
@@ -875,6 +878,9 @@ elements.clearFiles.addEventListener("click", () => {
   resetProgress();
   renderFiles();
 });
+elements.openSettings.addEventListener("click", () => {
+  elements.settingsDialog.showModal();
+});
 elements.convertButton.addEventListener("click", convertFiles);
 elements.mathOcr.addEventListener("change", () => {
   showNotice("");
@@ -1136,7 +1142,7 @@ if (convertMoreBtn) {
 // Global keyboard shortcut: Ctrl + Enter / Cmd + Enter
 document.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-    if (state.busy) return;
+    if (state.busy || elements.settingsDialog.open) return;
     event.preventDefault();
     if (state.files.length > 0) {
       convertFiles();
