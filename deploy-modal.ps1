@@ -33,7 +33,7 @@ try {
         Write-Host "Running deployment checks..." -ForegroundColor Cyan
         & $pythonExe -m py_compile modal_app.py app\services\serverless_jobs.py
         if ($LASTEXITCODE -ne 0) { throw "Python syntax checks failed." }
-        & $pythonExe -m pytest tests\test_serverless_jobs.py -q --basetemp artifacts\pytest-modal-deploy
+        & $pythonExe -m pytest tests\test_serverless_jobs.py -q
         if ($LASTEXITCODE -ne 0) { throw "Modal deployment tests failed." }
         if (Get-Command node -ErrorAction SilentlyContinue) {
             & node --check app\static\app.js
