@@ -36,6 +36,7 @@ from app.converters import (
     convert_image,
     convert_pdf,
     extract_pdf_pages,
+    validate_pdf_signature,
 )
 from app.converters.math_pipeline import get_math_engines_status
 from app.services.ocr import get_ocr_engine_info
@@ -189,8 +190,9 @@ def _unique_name(desired: str, used_names: set[str]) -> str:
 def _validate_signature(path: Path, suffix: str) -> None:
     with path.open("rb") as stream:
         signature = stream.read(8)
-    if suffix == ".pdf" and not signature.startswith(b"%PDF-"):
-        raise ConversionError("File có đuôi .pdf nhưng nội dung không phải PDF hợp lệ.")
+    if suffix == ".pdf":
+        validate_pdf_signature(path, signature)
+        return
     if suffix in {".xlsx", ".xlsm"} and not signature.startswith(b"PK"):
         raise ConversionError("File Excel hiện đại không phải gói XLSX/XLSM hợp lệ.")
     if suffix == ".xls" and not signature.startswith(bytes.fromhex("D0CF11E0A1B11AE1")):

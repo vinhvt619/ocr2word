@@ -376,7 +376,9 @@ def _normalize_char(raw_c: str, font_name: str) -> tuple[str, str, bool, bool]:
         return unicode_char, mapped, True, True
 
     if raw_c == "\ufffd" or (raw_c and 0xE000 <= ord(raw_c[0]) <= 0xF8FF):
-        return "\ufffd", "\ufffd", True, True
+        # Preserve math-font flag from known math fonts, but do not treat an
+        # isolated unknown/PUA glyph in ordinary prose as a math indicator.
+        return "\ufffd", "\ufffd", is_math_font, False
 
     if _is_math_alphanumeric(raw_c):
         nfkc = unicodedata.normalize("NFKC", raw_c)
@@ -1124,6 +1126,14 @@ def _word_has_vietnamese_diacritics(word: str) -> bool:
     return False
 
 
+def _text_has_equation_sign(flat_text: str) -> bool:
+    return bool(
+        re.search(r"=\s*[\d\w\(\+\-\.\,]", flat_text)
+        or re.search(r"[\d\w\)\.\,]\s*=", flat_text)
+        or ("=" in flat_text and any(ch.isalpha() for ch in flat_text))
+    )
+
+
 def _segment_visual_line(
     line: _VisualLine,
     radical_bars: list[HorizontalBar],
@@ -1152,11 +1162,7 @@ def _segment_visual_line(
         for c in non_space
     )
     flat_text = "".join(c.norm_c for c in sorted(line.chars, key=lambda c: c.x0)).strip()
-    has_eq_sign = bool(
-        re.search(r"=\s*[\d\w\(\+\-\.\,]", flat_text)
-        or re.search(r"[\d\w\)\.\,]\s*=", flat_text)
-        or ("=" in flat_text and any(ch.isalpha() for ch in flat_text))
-    )
+    has_eq_sign = _text_has_equation_sign(flat_text)
 
     if not (has_bars or has_math_chars or has_scripts or has_eq_sign):
         # Pure prose line
@@ -1708,9 +1714,12 @@ def page_has_digital_math_candidates(page, *, detect_tables: bool = True) -> boo
         return True
     if any(c.is_math_font or c.is_math_symbol for c in chars if not c.norm_c.isspace()):
         return True
-    # Check for clear subscript/superscript pairs on same line
+    # Check for clear subscript/superscript pairs or equation relations on a line
     lines = _cluster_visual_lines(chars, [])
     for line in lines:
+        flat_text = "".join(c.norm_c for c in sorted(line.chars, key=lambda c: c.x0)).strip()
+        if _text_has_equation_sign(flat_text):
+            return True
         for c in line.chars:
             if not c.norm_c.isspace():
                 if (

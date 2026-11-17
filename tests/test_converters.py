@@ -1016,3 +1016,374 @@ def test_auto_mode_converts_scanned_pdf_grid_to_word_table(
     assert len(document.tables) == 1
     assert document.tables[0].cell(1, 1).text == "Tam ung"
     assert "Tam ung" in _all_docx_text(output)
+
+
+def _background_png_bytes(width: int = 800, height: int = 1100) -> bytes:
+    import io
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (width, height), (242, 246, 252))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle([0, 0, int(width * 0.3), height], fill=(30, 58, 138))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+_CV_OVERLAY_LINES = (
+    "NGUYEN VAN A - SENIOR SOFTWARE ENGINEER",
+    "Email: nguyenvana@example.com | Phone: 0901234567 | Ho Chi Minh City",
+    "SUMMARY: Full-stack engineer specializing in Python, FastAPI, React, and Cloud.",
+    "EXPERIENCE: Senior Backend Developer at TechCorp Vietnam (2023 - Present)",
+    "Architected high-throughput document conversion pipelines with PyMuPDF and OpenCV.",
+    "Implemented asynchronous serverless workers on Modal and Vercel with Redis queues.",
+    "PROJECTS: OCR2Word - Intelligent PDF and Image to Word/Excel Converter (2025)",
+    "EDUCATION: Bachelor of Computer Science - University of Information Technology",
+)
+
+
+def _write_background_cv_pdf(
+    path: Path,
+    *,
+    rotation: int = 0,
+    include_hidden_layer: bool = True,
+) -> None:
+    import pymupdf
+
+    bg_bytes = _background_png_bytes()
+    doc = pymupdf.open()
+    try:
+        page = doc.new_page(width=595, height=842)
+        if rotation:
+            page.set_rotation(rotation)
+        # Cover ~98.4% of the page area with a background image painted first.
+        page.insert_image(pymupdf.Rect(2, 2, 593, 840), stream=bg_bytes)
+        if include_hidden_layer:
+            for index in range(4):
+                page.insert_text(
+                    (40, 55 + index * 18),
+                    "opacity zero hidden ocr text layer " * 2,
+                    fontsize=9,
+                    fill_opacity=0.0,
+                )
+        for index, line in enumerate(_CV_OVERLAY_LINES):
+            if rotation == 90:
+                page.insert_text((70 + index * 60, 780), line, fontsize=11, rotate=90)
+            else:
+                page.insert_text((40, 90 + index * 85), line, fontsize=11)
+        doc.save(path)
+    finally:
+        doc.close()
+
+
+def test_auto_mode_routes_background_image_cv_pdf_via_digital_layout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "designed-cv.pdf"
+    output = tmp_path / "designed-cv-editable.docx"
+    _write_background_cv_pdf(source, include_hidden_layer=True)
+
+    auto_analysis = analyze_pdf(source, ConversionOptions(ocr_mode="auto"))
+    assert auto_analysis.page_count == 1
+    assert auto_analysis.ocr_pages == ()
+    assert auto_analysis.image_backed_pages == (1,)
+
+    text_analysis = analyze_pdf(source, ConversionOptions(ocr_mode="text"))
+    assert text_analysis.ocr_pages == ()
+
+    force_analysis = analyze_pdf(source, ConversionOptions(ocr_mode="force"))
+    assert force_analysis.ocr_pages == (1,)
+
+    def fail_if_ocr_called(*_args, **_kwargs):
+        raise AssertionError("raster OCR must not be called for visible digital overlay PDFs")
+
+    monkeypatch.setattr("app.converters.pdf._write_ocr_page", fail_if_ocr_called)
+    result = convert_pdf(
+        source,
+        output,
+        ConversionOptions(
+            ocr_mode="auto",
+            preserve_layout=True,
+            preserve_images=True,
+            page_breaks=True,
+        ),
+    )
+
+    assert result.page_count == 1
+    assert output.exists()
+    extracted = _all_docx_text(output)
+    assert "NGUYEN VAN A" in extracted
+    assert "OCR2Word" in extracted
+    converted = Document(output)
+    assert len(converted.element.xpath(".//w:drawing")) >= 1
+
+    ocr_calls: list[int] = []
+
+    def fake_write_ocr_page(doc, _page, _options, _w_in, _w_dxa):
+        ocr_calls.append(1)
+        doc.add_paragraph("FORCED OCR OUTPUT")
+        return 1, 0, []
+
+    monkeypatch.setattr("app.converters.pdf._write_ocr_page", fake_write_ocr_page)
+    force_output = tmp_path / "designed-cv-force.docx"
+    convert_pdf(source, force_output, ConversionOptions(ocr_mode="force"))
+    assert ocr_calls == [1]
+    assert "FORCED OCR OUTPUT" in _all_docx_text(force_output)
+
+
+def test_rotated_background_image_pdf_with_visible_text_routes_digital(tmp_path: Path) -> None:
+    source = tmp_path / "rotated-cv.pdf"
+    _write_background_cv_pdf(source, rotation=90, include_hidden_layer=False)
+
+    analysis = analyze_pdf(source, ConversionOptions(ocr_mode="auto"))
+    assert analysis.page_count == 1
+    assert analysis.ocr_pages == ()
+    assert analysis.image_backed_pages == (1,)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "image_only",
+        "short_title_and_footer",
+        "hidden_ocr_layers",
+        "text_behind_opaque_image",
+        "replacement_glyphs",
+    ],
+)
+def test_image_heavy_scans_and_hidden_or_occluded_text_stay_on_ocr_path(
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    import pymupdf
+
+    bg_bytes = _background_png_bytes()
+    source = tmp_path / f"{kind}.pdf"
+    doc = pymupdf.open()
+    try:
+        page = doc.new_page(width=595, height=842)
+        if kind == "image_only":
+            page.insert_image(pymupdf.Rect(2, 2, 593, 840), stream=bg_bytes)
+        elif kind == "short_title_and_footer":
+            page.insert_image(pymupdf.Rect(2, 2, 593, 840), stream=bg_bytes)
+            page.insert_text((40, 60), "SCANNED CONTRACT 2026 - OFFICIAL COPY", fontsize=14)
+            page.insert_text((40, 800), "Page 1 of 1", fontsize=10)
+        elif kind == "hidden_ocr_layers":
+            page.insert_image(pymupdf.Rect(2, 2, 593, 840), stream=bg_bytes)
+            for index, line in enumerate(_CV_OVERLAY_LINES):
+                page.insert_text((40, 80 + index * 80), line, fontsize=11, render_mode=3)
+                page.insert_text((40, 95 + index * 80), line, fontsize=11, fill_opacity=0.0)
+        elif kind == "text_behind_opaque_image":
+            for index, line in enumerate(_CV_OVERLAY_LINES):
+                page.insert_text((40, 80 + index * 85), line, fontsize=11)
+            # Painted AFTER the text, occluding it with an opaque full-page image.
+            page.insert_image(pymupdf.Rect(2, 2, 593, 840), stream=bg_bytes)
+        elif kind == "replacement_glyphs":
+            page.insert_image(pymupdf.Rect(2, 2, 593, 840), stream=bg_bytes)
+            cjk_font = pymupdf.Font("cjk")
+            page.insert_font(fontname="F0", fontbuffer=cjk_font.buffer)
+            for index in range(7):
+                page.insert_text(
+                    (40, 80 + index * 85),
+                    ("\ufffd" * 20) + " alpha beta gamma delta epsilon zeta",
+                    fontname="F0",
+                    fontsize=11,
+                )
+        doc.save(source)
+    finally:
+        doc.close()
+
+    analysis = analyze_pdf(source, ConversionOptions(ocr_mode="auto"))
+    assert analysis.page_count == 1
+    assert analysis.image_backed_pages == (1,)
+    assert analysis.ocr_pages == (1,)
+
+
+def _insert_cjk_line_with_pua_glyph(doc, page, x: float, y: float, before: str, after: str) -> None:
+    """Write a line containing U+0192 in CJK font and remap its ToUnicode entry to U+E001."""
+    import pymupdf
+
+    writer = pymupdf.TextWriter(page.rect)
+    writer.append((x, y), before + "\u0192" + after, font=pymupdf.Font("cjk"), fontsize=10.5)
+    writer.write_text(page)
+    for xref in range(1, doc.xref_length()):
+        if doc.xref_is_stream(xref):
+            stream = doc.xref_stream(xref)
+            if b"<0136> <0192>" in stream:
+                doc.update_stream(xref, stream.replace(b"<0136> <0192>", b"<0136> <e001>"))
+
+
+def test_math_rules_ignores_complex_filled_bezier_outlines_and_isolated_replacement_in_prose(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import pymupdf
+    from app.converters.math_regions import extract_candidate_horizontal_bars
+    from app.converters.math_rules import (
+        _normalize_char,
+        extract_digital_math_page,
+        page_has_digital_math_candidates,
+    )
+
+    assert _normalize_char("\ufffd", "Arial") == ("\ufffd", "\ufffd", False, False)
+    assert _normalize_char("\ue001", "Roboto") == ("\ufffd", "\ufffd", False, False)
+    assert _normalize_char("\ufffd", "CambriaMath") == ("\ufffd", "\ufffd", True, False)
+    assert _normalize_char("\uf061", "Symbol") == ("α", r"\alpha", True, True)
+
+    bg_bytes = _background_png_bytes()
+    source = tmp_path / "cv-bezier-and-pua.pdf"
+    output = tmp_path / "cv-bezier-and-pua-editable.docx"
+    doc = pymupdf.open()
+    try:
+        page = doc.new_page(width=595, height=842)
+        page.insert_image(pymupdf.Rect(2, 2, 593, 840), stream=bg_bytes)
+        stacked_lines = [
+            (100, _CV_OVERLAY_LINES[0]),
+            (114, _CV_OVERLAY_LINES[1]),
+            (200, _CV_OVERLAY_LINES[2]),
+            (214, _CV_OVERLAY_LINES[3]),
+            (320, _CV_OVERLAY_LINES[4]),
+            (420, _CV_OVERLAY_LINES[5]),
+            (520, _CV_OVERLAY_LINES[6]),
+            (620, _CV_OVERLAY_LINES[7]),
+        ]
+        for y_pos, text in stacked_lines:
+            page.insert_text((40, y_pos), text, fontsize=10.5)
+        _insert_cjk_line_with_pua_glyph(
+            doc,
+            page,
+            40,
+            720,
+            "Developed scalable microservices ",
+            " maintained high availability across regional clusters daily.",
+        )
+        # Complex fill-only (type='f') bezier+line vector outlines sitting right between
+        # tightly stacked text lines (100/114 and 200/214) with 3-18 pt horizontal edges.
+        for bar_y, width in ((105.0, 15.0), (205.0, 8.0), (105.0, 3.2)):
+            shape = page.new_shape()
+            x0 = 60.0 if width > 5 else 140.0
+            shape.draw_line((x0, bar_y), (x0 + width, bar_y))
+            shape.draw_bezier(
+                (x0 + width, bar_y),
+                (x0 + width + 2.0, bar_y + 6.0),
+                (x0 + 2.0, bar_y + 6.0),
+                (x0, bar_y),
+            )
+            shape.finish(fill=(0.2, 0.3, 0.5), color=None, closePath=True)
+            shape.commit()
+        doc.save(source)
+    finally:
+        doc.close()
+
+    with pymupdf.open(source) as loaded:
+        loaded_page = loaded[0]
+        assert extract_candidate_horizontal_bars(loaded_page) == []
+        assert page_has_digital_math_candidates(loaded_page) is False
+        math_res = extract_digital_math_page(loaded_page)
+        assert math_res.has_math is False
+        assert math_res.recognized_by_rules == 0
+        assert math_res.unresolved_regions == []
+
+    def fail_if_local_model_loaded():
+        raise AssertionError("local_hybrid model must not be loaded for non-math CV prose")
+
+    monkeypatch.setattr("app.converters.math_local.ensure_local_math_model_ready", fail_if_local_model_loaded)
+    result = convert_pdf(
+        source,
+        output,
+        ConversionOptions(
+            ocr_mode="auto",
+            preserve_layout=True,
+            preserve_images=True,
+            page_breaks=True,
+            math_ocr=True,
+            math_engine="local_hybrid",
+        ),
+    )
+
+    assert result.page_count == 1
+    assert (result.equation_count or 0) == 0
+    extracted = _all_docx_text(output)
+    assert "NGUYEN VAN A" in extracted
+    assert "OCR2Word" in extracted
+    converted = Document(output)
+    assert len(converted.element.xpath(".//m:oMath")) == 0
+    assert len(converted.element.xpath(".//w:drawing")) >= 1
+
+
+def test_math_rules_preserves_stroked_and_filled_rect_fractions_and_real_math_with_corrupted_glyph() -> None:
+    import pymupdf
+    from app.converters.math_rules import extract_digital_math_page, page_has_digital_math_candidates
+
+    doc = pymupdf.open()
+    try:
+        page = doc.new_page(width=600, height=800)
+        # 1. Stroked horizontal fraction bar (a/b)
+        page.insert_text((100, 100), "a", fontsize=11)
+        page.insert_text((100, 116), "b", fontsize=11)
+        s1 = page.new_shape()
+        s1.draw_line((96, 105), (112, 105))
+        s1.finish(color=(0, 0, 0), width=0.8)
+        s1.commit()
+
+        # 2. Thin filled 're' rectangle fraction bar (c/d)
+        page.insert_text((100, 200), "c", fontsize=11)
+        page.insert_text((100, 216), "d", fontsize=11)
+        s2 = page.new_shape()
+        s2.draw_rect(pymupdf.Rect(96, 204.5, 112, 205.5))
+        s2.finish(fill=(0, 0, 0), color=None)
+        s2.commit()
+
+        # 3. Thin filled 4-edge 'l' rectangle fraction bar (x/y)
+        page.insert_text((100, 300), "x", fontsize=11)
+        page.insert_text((100, 316), "y", fontsize=11)
+        s3 = page.new_shape()
+        s3.draw_line((96, 304.5), (112, 304.5))
+        s3.draw_line((112, 304.5), (112, 305.5))
+        s3.draw_line((112, 305.5), (96, 305.5))
+        s3.draw_line((96, 305.5), (96, 304.5))
+        s3.finish(fill=(0, 0, 0), color=None, closePath=True)
+        s3.commit()
+
+        # 4. Known Unicode math symbol equation
+        page.insert_text((100, 400), "E = mc", fontsize=11)
+        page.insert_text((135, 395), "2", fontsize=7.5)
+
+        raw_valid = doc.tobytes()
+    finally:
+        doc.close()
+
+    with pymupdf.open("pdf", raw_valid) as valid_pdf:
+        vpage = valid_pdf[0]
+        assert page_has_digital_math_candidates(vpage) is True
+        vres = extract_digital_math_page(vpage)
+        assert vres.has_math is True
+        assert vres.recognized_by_rules == 4
+        assert vres.unresolved_regions == []
+        math_contents = [
+            span.content
+            for block in vres.page_model.blocks
+            for span in block.spans
+            if span.kind == "math"
+        ]
+        assert r"\frac{a}{b}" in math_contents
+        assert r"\frac{c}{d}" in math_contents
+        assert r"\frac{x}{y}" in math_contents
+        assert any("^{2}" in m for m in math_contents)
+
+    # Real math beside an unsupported glyph must still flag unresolved corrupted_glyph_encoding
+    doc_bad = pymupdf.open()
+    try:
+        bad_page = doc_bad.new_page(width=600, height=800)
+        _insert_cjk_line_with_pua_glyph(doc_bad, bad_page, 100, 200, "x = a + ", "")
+        raw_bad = doc_bad.tobytes()
+    finally:
+        doc_bad.close()
+
+    with pymupdf.open("pdf", raw_bad) as bad_pdf:
+        bpage = bad_pdf[0]
+        assert page_has_digital_math_candidates(bpage) is True
+        bres = extract_digital_math_page(bpage)
+        assert bres.has_math is True
+        assert [u.reason for u in bres.unresolved_regions] == ["corrupted_glyph_encoding"]

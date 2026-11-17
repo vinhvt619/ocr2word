@@ -47,6 +47,13 @@ def convert_to_excel(input_path: Path, output_path: Path, options: ConversionOpt
 
     return convert_to_excel_impl(input_path, output_path, options)
 
+
+def validate_pdf_signature(input_path: Path, signature: bytes | None = None) -> None:
+    from .pdf import validate_pdf_signature as validate_pdf_signature_impl
+
+    validate_pdf_signature_impl(input_path, signature)
+
+
 __all__ = [
     "ConversionError",
     "ConversionOptions",
@@ -57,4 +64,5 @@ __all__ = [
     "convert_pdf",
     "convert_to_excel",
     "extract_pdf_pages",
+    "validate_pdf_signature",
 ]

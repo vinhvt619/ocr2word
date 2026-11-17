@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import statistics
+import unicodedata
 import warnings as python_warnings
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -33,6 +34,54 @@ try:
     import pymupdf
 except ImportError:  # pragma: no cover - exercised in dependency diagnostics
     pymupdf = None
+
+
+PDF_HEADER_SCAN_BYTES = 1024
+INVALID_PDF_SIGNATURE_MESSAGE = "File có đuôi .pdf nhưng nội dung không phải PDF hợp lệ."
+
+
+def is_valid_pdf_signature(path: Path, signature: bytes | None = None) -> bool:
+    """Validate a PDF by byte-0 magic, falling back to a bounded 1 KiB prefix and PyMuPDF check."""
+    if signature is None:
+        with path.open("rb") as stream:
+            signature = stream.read(8)
+    if signature.startswith(b"%PDF-"):
+        return True
+
+    with path.open("rb") as stream:
+        prefix = stream.read(PDF_HEADER_SCAN_BYTES)
+    offset = prefix.find(b"%PDF-")
+    if offset < 0 or offset > PDF_HEADER_SCAN_BYTES - len(b"%PDF-"):
+        return False
+
+    if pymupdf is None:
+        return False
+
+    pdf_doc = None
+    try:
+        pdf_doc = pymupdf.open(path, filetype="pdf")
+        if not getattr(pdf_doc, "is_pdf", False):
+            return False
+        if getattr(pdf_doc, "needs_pass", 0):
+            return True
+        if pdf_doc.page_count < 1:
+            return False
+        xref = pdf_doc.page_xref(0)
+        if xref < 1:
+            return False
+        obj = pdf_doc.xref_object(xref, compressed=True)
+        return "/Page" in obj
+    except Exception:
+        return False
+    finally:
+        if pdf_doc is not None and not getattr(pdf_doc, "is_closed", True):
+            pdf_doc.close()
+
+
+def validate_pdf_signature(path: Path, signature: bytes | None = None) -> None:
+    """Raise ConversionError if a .pdf file is neither a byte-0 PDF nor a parseable prefixed PDF."""
+    if not is_valid_pdf_signature(path, signature):
+        raise ConversionError(INVALID_PDF_SIGNATURE_MESSAGE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,17 +319,205 @@ def _largest_image_ratio(page) -> float:
     return largest_image_ratio
 
 
+# Conservative thresholds for recognizing a genuine digital text overlay
+# painted above a large background image (e.g., designed CVs, flyers) while
+# keeping scans with short titles, hidden OCR layers, or noise on the OCR path.
+_OVERLAY_MIN_ALNUM_CHARS = 160
+_OVERLAY_MIN_TOKENS = 28
+_OVERLAY_MIN_LINES = 5
+_OVERLAY_MIN_SUBSTANTIVE_LINES = 4
+_OVERLAY_MIN_LINE_ALNUM = 12
+_OVERLAY_MIN_VERTICAL_SPREAD_RATIO = 0.25
+_OVERLAY_MIN_OPACITY = 0.05
+_OVERLAY_VISIBLE_TEXT_TYPES = frozenset({0, 1, 2})
+_OVERLAY_MAX_REPLACEMENT_RATIO = 0.10
+
+
+def _has_substantial_visible_digital_text(
+    page,
+    compact_text: str,
+    options: ConversionOptions,
+) -> bool:
+    """Return True if an image-backed page contains substantial visible text painted above the image."""
+
+    min_chars = max(int(options.min_text_chars), _OVERLAY_MIN_ALNUM_CHARS)
+    if not compact_text or len(compact_text) < min_chars:
+        return False
+    if pymupdf is None or not hasattr(page, "get_texttrace") or not hasattr(page, "get_bboxlog"):
+        return False
+
+    try:
+        page_rect = pymupdf.Rect(page.rect)
+        page_width = float(page_rect.width)
+        page_height = float(page_rect.height)
+        page_area = page_width * page_height
+        if page_width <= 1.0 or page_height <= 1.0:
+            return False
+        use_rotation = bool(getattr(page, "rotation", 0) % 360)
+        rot_matrix = page.rotation_matrix if use_rotation else None
+        bboxlog = page.get_bboxlog()
+        texttrace = page.get_texttrace()
+    except Exception:
+        return False
+
+    if not texttrace or not bboxlog:
+        return False
+
+    def to_page_rect(raw_bbox: tuple[float, ...]):
+        rect = pymupdf.Rect(raw_bbox)
+        if rot_matrix is not None:
+            rect = rect * rot_matrix
+        rect.normalize()
+        return rect & page_rect
+
+    # Identify large painted images and their paint sequence indices so text
+    # painted before/under an opaque covering image is not treated as visible.
+    covering_images: list[tuple[int, Any]] = []
+    for seq_index, entry in enumerate(bboxlog):
+        if not isinstance(entry, tuple) or len(entry) < 2:
+            continue
+        kind = str(entry[0]).lower()
+        if "image" not in kind or kind.startswith("clip-"):
+            continue
+        try:
+            img_rect = to_page_rect(tuple(entry[1]))
+        except Exception:
+            continue
+        if img_rect.is_empty or float(img_rect.get_area()) / page_area < 0.15:
+            continue
+        covering_images.append((seq_index, img_rect))
+    if not covering_images:
+        return False
+
+    total_alnum = 0
+    total_tokens = 0
+    non_space_glyphs = 0
+    replacement_glyphs = 0
+    # (x_center, y_center, width, height, alnum_count)
+    visible_spans: list[tuple[float, float, float, float, int]] = []
+
+    for span in texttrace:
+        if not isinstance(span, dict):
+            continue
+        # Only fill (0), stroke (1), or fill+stroke (2); skip render mode 3 (invisible).
+        if span.get("type") not in _OVERLAY_VISIBLE_TEXT_TYPES:
+            continue
+        try:
+            opacity = float(span.get("opacity", 1.0))
+        except (TypeError, ValueError):
+            opacity = 0.0
+        if opacity <= _OVERLAY_MIN_OPACITY:
+            continue
+        try:
+            seqno = int(span.get("seqno", -1))
+            span_rect = to_page_rect(tuple(span.get("bbox", (0, 0, 0, 0))))
+        except Exception:
+            continue
+        if seqno < 0 or span_rect.is_empty:
+            continue
+        span_area = max(1e-6, float(span_rect.get_area()))
+        if any(
+            img_seq > seqno and float((span_rect & img_rect).get_area()) / span_area >= 0.25
+            for img_seq, img_rect in covering_images
+        ):
+            continue
+
+        chars_out: list[str] = []
+        span_alnum = 0
+        for char_info in span.get("chars", ()):
+            if not isinstance(char_info, (tuple, list)) or not char_info:
+                continue
+            try:
+                codepoint = int(char_info[0])
+            except (TypeError, ValueError):
+                replacement_glyphs += 1
+                non_space_glyphs += 1
+                continue
+            if codepoint <= 0 or codepoint > 0x10FFFF or codepoint == 0xFFFD:
+                replacement_glyphs += 1
+                non_space_glyphs += 1
+                continue
+            ch = chr(codepoint)
+            if ch.isspace():
+                chars_out.append(" ")
+                continue
+            non_space_glyphs += 1
+            if unicodedata.category(ch) in {"Co", "Cs", "Cc"}:
+                replacement_glyphs += 1
+                continue
+            chars_out.append(ch)
+            if ch.isalnum():
+                span_alnum += 1
+
+        if span_alnum <= 0:
+            continue
+        total_alnum += span_alnum
+        span_text = "".join(chars_out)
+        total_tokens += sum(1 for tok in span_text.split() if any(c.isalnum() for c in tok))
+        visible_spans.append(
+            (
+                (float(span_rect.x0) + float(span_rect.x1)) / 2.0,
+                (float(span_rect.y0) + float(span_rect.y1)) / 2.0,
+                max(1.0, float(span_rect.width)),
+                max(1.0, float(span_rect.height)),
+                span_alnum,
+            )
+        )
+
+    if non_space_glyphs <= 0 or (replacement_glyphs / non_space_glyphs) > _OVERLAY_MAX_REPLACEMENT_RATIO:
+        return False
+    if total_alnum < _OVERLAY_MIN_ALNUM_CHARS or total_tokens < _OVERLAY_MIN_TOKENS or not visible_spans:
+        return False
+
+    horizontal_weight = sum(alnum for _xc, _yc, w, h, alnum in visible_spans if w >= h)
+    vertical_weight = sum(alnum for _xc, _yc, w, h, alnum in visible_spans if h > w)
+    vertical_text_layout = vertical_weight > horizontal_weight
+    axis_span = page_width if vertical_text_layout else page_height
+    samples = sorted(
+        (
+            (xc if vertical_text_layout else yc, w if vertical_text_layout else h, alnum)
+            for xc, yc, w, h, alnum in visible_spans
+        ),
+        key=lambda item: item[0],
+    )
+    median_thickness = statistics.median(item[1] for item in samples)
+    line_tol = max(4.0, min(axis_span * 0.025, median_thickness * 0.65))
+
+    line_bands: list[dict[str, float | int]] = []
+    for pos, _thickness, alnum_count in samples:
+        if line_bands and abs(pos - float(line_bands[-1]["pos"])) <= line_tol:
+            prev = line_bands[-1]
+            spans_count = int(prev["spans"])
+            prev["pos"] = (float(prev["pos"]) * spans_count + pos) / (spans_count + 1)
+            prev["spans"] = spans_count + 1
+            prev["alnum"] = int(prev["alnum"]) + alnum_count
+        else:
+            line_bands.append({"pos": pos, "spans": 1, "alnum": alnum_count})
+
+    if len(line_bands) < _OVERLAY_MIN_LINES:
+        return False
+    substantive_lines = [band for band in line_bands if int(band["alnum"]) >= _OVERLAY_MIN_LINE_ALNUM]
+    if len(substantive_lines) < _OVERLAY_MIN_SUBSTANTIVE_LINES:
+        return False
+    spread_ratio = (
+        max(float(band["pos"]) for band in substantive_lines)
+        - min(float(band["pos"]) for band in substantive_lines)
+    ) / axis_span
+    return spread_ratio >= _OVERLAY_MIN_VERTICAL_SPREAD_RATIO
+
+
 def _should_ocr_page(page, compact_text: str, options: ConversionOptions) -> bool:
     if options.ocr_mode == "force":
         return True
     if options.ocr_mode == "text":
         return False
     largest_image_ratio = _largest_image_ratio(page)
-    # A scan can already contain a poor hidden OCR layer. Treat the page as a
-    # scan based on its visual structure instead of trusting that text layer;
-    # otherwise garbled hidden text replaces the original page image.
+    # A scan can already contain a poor hidden OCR layer, so ignore invisible
+    # text layers by default. However, designed digital PDFs (e.g. CVs) often
+    # paint a full-page background image underneath substantial opaque digital
+    # text; route those through the digital/layout converter instead of OCR.
     if largest_image_ratio >= 0.70:
-        return True
+        return not _has_substantial_visible_digital_text(page, compact_text, options)
     if not compact_text:
         return True
     if len(compact_text) >= options.min_text_chars:

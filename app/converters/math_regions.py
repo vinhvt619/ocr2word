@@ -225,7 +225,38 @@ def bbox_1000_to_pixels(
     return (x0, y0, x1, y1)
 
 
-def _visible_drawing_segments(page) -> tuple[list[tuple[float, float, float, float]], list[tuple[float, float, float, float]]]:
+def _is_complex_filled_outline_for_bars(drawing: dict[str, Any]) -> bool:
+    """Return True when a fill-only drawing is a curved or tall outline rather than a thin bar rectangle."""
+    dtype = drawing.get("type")
+    fill_only = dtype == "f" or (drawing.get("color") is None and drawing.get("fill") is not None)
+    if not fill_only:
+        return False
+
+    items = [item for item in drawing.get("items", ()) if item]
+    ops = [item[0] for item in items]
+    if any(op == "c" for op in ops):
+        return True
+
+    if ops and all(op == "re" for op in ops):
+        return False
+
+    rect = drawing.get("rect")
+    if rect is None:
+        return True
+    width = float(rect.x1) - float(rect.x0)
+    height = float(rect.y1) - float(rect.y0)
+    if width < 2.5 or height > 3.6:
+        return True
+    if len(ops) > 4 or not all(op in {"l", "qu", "re"} for op in ops):
+        return True
+    return False
+
+
+def _visible_drawing_segments(
+    page,
+    *,
+    exclude_complex_filled_outlines: bool = False,
+) -> tuple[list[tuple[float, float, float, float]], list[tuple[float, float, float, float]]]:
     """Return (horizontal_segments, vertical_segments) from visible PDF vector drawings."""
     h_segs: list[tuple[float, float, float, float]] = []
     v_segs: list[tuple[float, float, float, float]] = []
@@ -239,6 +270,8 @@ def _visible_drawing_segments(page) -> tuple[list[tuple[float, float, float, flo
         if dtype is None or dtype == "clip":
             continue
         if d.get("color") is None and d.get("fill") is None:
+            continue
+        if exclude_complex_filled_outlines and _is_complex_filled_outline_for_bars(d):
             continue
         added_from_items = False
         for item in d.get("items", ()):
@@ -381,7 +414,7 @@ def extract_candidate_horizontal_bars(
     """Extract thin horizontal segments from page drawings that are outside verified tables."""
     excluded = list(excluded_table_bboxes)
     page_width = float(page.rect.width)
-    h_segs, _ = _visible_drawing_segments(page)
+    h_segs, _ = _visible_drawing_segments(page, exclude_complex_filled_outlines=True)
 
     filtered: list[tuple[float, float, float, float]] = []
     for seg in h_segs:
