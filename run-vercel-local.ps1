@@ -121,9 +121,9 @@ try {
     }
 
     if ($BuildFirst) {
-        Write-Host "Running TypeScript parity check..." -ForegroundColor Cyan
+        Write-Host "Running JavaScript/JSDoc type check..." -ForegroundColor Cyan
         & npm.cmd run typecheck --prefix $frontendRoot
-        if ($LASTEXITCODE -ne 0) { throw "TypeScript check failed." }
+        if ($LASTEXITCODE -ne 0) { throw "JavaScript/JSDoc type check failed." }
         if ($env:OS -eq "Windows_NT") {
             # Vercel's Windows packager creates function symlinks and fails with
             # EPERM unless Windows Developer Mode or elevated privileges are enabled.

@@ -1,10 +1,15 @@
-import type { NextApiRequest, NextApiResponse } from "next";
+import { validJobId } from "../../../../lib/api.js";
+import { createDownloadUrl } from "../../../../lib/blob.js";
+import { getJob } from "../../../../lib/store.js";
 
-import { validJobId } from "../../../../lib/api";
-import { createDownloadUrl } from "../../../../lib/blob";
-import { getJob } from "../../../../lib/store";
+/** @typedef {import("next").NextApiRequest} NextApiRequest */
+/** @typedef {import("next").NextApiResponse} NextApiResponse */
 
-export default async function handler(request: NextApiRequest, response: NextApiResponse) {
+/**
+ * @param {NextApiRequest} request
+ * @param {NextApiResponse} response
+ */
+export default async function handler(request, response) {
   if (request.method !== "GET") {
     response.setHeader("Allow", "GET");
     return response.status(405).json({ detail: "Phương thức không được hỗ trợ." });
@@ -13,7 +18,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
   if (!validJobId(jobId)) return response.status(404).json({ detail: "Không tìm thấy lượt chuyển đổi." });
   const job = await getJob(jobId);
   if (!job) return response.status(404).json({ detail: "Lượt chuyển đổi đã hết hạn hoặc không tồn tại." });
-  const result: Record<string, unknown> = { ...job, files: undefined, options: undefined, output_pathname: undefined };
+  /** @type {Record<string, unknown>} */
+  const result = { ...job, files: undefined, options: undefined, output_pathname: undefined };
   if (job.status === "complete") {
     result.download_url = await createDownloadUrl(job.output_pathname);
     result.download_name = job.output_name;

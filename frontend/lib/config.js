@@ -23,7 +23,8 @@ export const ALLOWED_EXTENSIONS = new Set([
   ...EXCEL_EXTENSIONS,
 ]);
 
-const MIME_TYPES: Record<string, string> = {
+/** @type {Record<string, string>} */
+const MIME_TYPES = {
   pdf: "application/pdf",
   png: "image/png",
   jpg: "image/jpeg",
@@ -37,16 +38,28 @@ const MIME_TYPES: Record<string, string> = {
   xls: "application/vnd.ms-excel",
 };
 
-export function extensionOf(filename: string): string {
+/**
+ * @param {string} filename
+ * @returns {string}
+ */
+export function extensionOf(filename) {
   const dot = filename.lastIndexOf(".");
   return dot >= 0 ? filename.slice(dot + 1).toLowerCase() : "";
 }
 
-export function mimeTypeFor(filename: string): string {
+/**
+ * @param {string} filename
+ * @returns {string}
+ */
+export function mimeTypeFor(filename) {
   return MIME_TYPES[extensionOf(filename)] ?? "application/octet-stream";
 }
 
-export function safeDownloadStem(filename: string): string {
+/**
+ * @param {string} filename
+ * @returns {string}
+ */
+export function safeDownloadStem(filename) {
   const extension = extensionOf(filename);
   const withoutExtension = extension ? filename.slice(0, -(extension.length + 1)) : filename;
   const cleaned = withoutExtension
@@ -58,10 +71,12 @@ export function safeDownloadStem(filename: string): string {
   return cleaned || "tai-lieu";
 }
 
-export function outputDetails(
-  files: Array<{ name: string }>,
-  outputFormat: "docx" | "xlsx" = "docx",
-) {
+/**
+ * @param {Array<{ name: string }>} files
+ * @param {"docx" | "xlsx"} [outputFormat="docx"]
+ * @returns {{ name: string, extension: string, contentType: string }}
+ */
+export function outputDetails(files, outputFormat = "docx") {
   if (files.length === 1) {
     if (outputFormat === "xlsx") {
       return {
@@ -84,7 +99,10 @@ export function outputDetails(
   };
 }
 
-export function internalSecret(): string {
+/**
+ * @returns {string}
+ */
+export function internalSecret() {
   const value = process.env.OCR2WORD_INTERNAL_SECRET?.trim();
   if (value) return value;
   if (!process.env.VERCEL) return "ocr2word-local-development-only";

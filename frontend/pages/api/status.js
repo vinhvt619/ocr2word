@@ -1,7 +1,8 @@
-import type { NextApiRequest, NextApiResponse } from "next";
+import { ALLOWED_EXTENSIONS, MAX_FILES, MAX_FILE_BYTES, MAX_TOTAL_BYTES } from "../../lib/config.js";
+import { configuredQueueRegion } from "../../lib/queue-client.js";
 
-import { ALLOWED_EXTENSIONS, MAX_FILES, MAX_FILE_BYTES, MAX_TOTAL_BYTES } from "../../lib/config";
-import { configuredQueueRegion } from "../../lib/queue-client";
+/** @typedef {import("next").NextApiRequest} NextApiRequest */
+/** @typedef {import("next").NextApiResponse} NextApiResponse */
 
 const unavailableOcr = {
   available: false,
@@ -12,12 +13,17 @@ const unavailableOcr = {
   message: "Không kết nối được container OCR trên Vercel.",
 };
 
-export default async function handler(request: NextApiRequest, response: NextApiResponse) {
+/**
+ * @param {NextApiRequest} request
+ * @param {NextApiResponse} response
+ */
+export default async function handler(request, response) {
   if (request.method !== "GET") {
     response.setHeader("Allow", "GET");
     return response.status(405).json({ detail: "Phương thức không được hỗ trợ." });
   }
 
+  const workerBaseUrl = process.env.OCR2WORD_WORKER_URL;
   const configuration = {
     blob: Boolean(process.env.BLOB_READ_WRITE_TOKEN || (process.env.BLOB_STORE_ID && process.env.VERCEL_OIDC_TOKEN)),
     redis: Boolean(
@@ -25,20 +31,23 @@ export default async function handler(request: NextApiRequest, response: NextApi
       || (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN),
     ),
     secret: Boolean(process.env.OCR2WORD_INTERNAL_SECRET),
-    worker: Boolean(process.env.OCR2WORD_WORKER_URL),
+    worker: Boolean(workerBaseUrl),
   };
-  let workerStatus: Record<string, unknown> = {};
-  if (configuration.worker) {
+  /** @type {Record<string, unknown>} */
+  let workerStatus = {};
+  if (configuration.worker && workerBaseUrl) {
     try {
-      const workerUrl = new URL("/api/status", `${process.env.OCR2WORD_WORKER_URL!.replace(/\/$/, "")}/`);
+      const workerUrl = new URL("/api/status", `${workerBaseUrl.replace(/\/$/, "")}/`);
       const workerResponse = await fetch(workerUrl, { cache: "no-store", signal: AbortSignal.timeout(5000) });
-      if (workerResponse.ok) workerStatus = await workerResponse.json() as Record<string, unknown>;
+      if (workerResponse.ok) {
+        workerStatus = /** @type {Record<string, unknown>} */ (await workerResponse.json());
+      }
     } catch {
       // Return a useful status payload even while the worker is cold or unavailable.
     }
   }
   const workerOcr = workerStatus.ocr && typeof workerStatus.ocr === "object"
-    ? workerStatus.ocr as { available?: boolean }
+    ? /** @type {{ available?: boolean }} */ (workerStatus.ocr)
     : null;
   const ready = Object.values(configuration).every(Boolean) && workerOcr?.available === true;
   const missing = Object.entries(configuration).filter(([, value]) => !value).map(([key]) => key);

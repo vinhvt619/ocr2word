@@ -8,14 +8,16 @@ import {
   SIGNED_DOWNLOAD_TTL_MS,
   SIGNED_UPLOAD_TTL_MS,
   SIGNED_WORKER_TTL_MS,
-} from "./config";
+} from "./config.js";
 
-async function signedUrl(
-  pathname: string,
-  operation: "get" | "head" | "put",
-  validForMs: number,
-  options: { contentType?: string; maximumSizeInBytes?: number; allowOverwrite?: boolean } = {},
-): Promise<string> {
+/**
+ * @param {string} pathname
+ * @param {"get" | "head" | "put"} operation
+ * @param {number} validForMs
+ * @param {{ contentType?: string, maximumSizeInBytes?: number, allowOverwrite?: boolean }} [options]
+ * @returns {Promise<string>}
+ */
+async function signedUrl(pathname, operation, validForMs, options = {}) {
   const validUntil = Date.now() + validForMs;
   const token = await issueSignedToken({
     pathname,
@@ -44,23 +46,31 @@ async function signedUrl(
   return result.presignedUrl;
 }
 
-export function createBrowserUploadUrl(
-  pathname: string,
-  contentType: string,
-  maximumSizeInBytes: number,
-): Promise<string> {
+/**
+ * @param {string} pathname
+ * @param {string} contentType
+ * @param {number} maximumSizeInBytes
+ * @returns {Promise<string>}
+ */
+export function createBrowserUploadUrl(pathname, contentType, maximumSizeInBytes) {
   return signedUrl(pathname, "put", SIGNED_UPLOAD_TTL_MS, { contentType, maximumSizeInBytes });
 }
 
-export function createWorkerReadUrl(pathname: string): Promise<string> {
+/**
+ * @param {string} pathname
+ * @returns {Promise<string>}
+ */
+export function createWorkerReadUrl(pathname) {
   return signedUrl(pathname, "get", SIGNED_WORKER_TTL_MS);
 }
 
-export function createWorkerWriteUrl(
-  pathname: string,
-  contentType: string,
-  maximumSizeInBytes: number,
-): Promise<string> {
+/**
+ * @param {string} pathname
+ * @param {string} contentType
+ * @param {number} maximumSizeInBytes
+ * @returns {Promise<string>}
+ */
+export function createWorkerWriteUrl(pathname, contentType, maximumSizeInBytes) {
   return signedUrl(pathname, "put", SIGNED_WORKER_TTL_MS, {
     contentType,
     maximumSizeInBytes,
@@ -68,11 +78,19 @@ export function createWorkerWriteUrl(
   });
 }
 
-export function createDownloadUrl(pathname: string): Promise<string> {
+/**
+ * @param {string} pathname
+ * @returns {Promise<string>}
+ */
+export function createDownloadUrl(pathname) {
   return signedUrl(pathname, "get", SIGNED_DOWNLOAD_TTL_MS);
 }
 
-export async function deleteBlobs(pathnames: string[]): Promise<void> {
+/**
+ * @param {string[]} pathnames
+ * @returns {Promise<void>}
+ */
+export async function deleteBlobs(pathnames) {
   if (!pathnames.length) return;
   await del(pathnames);
 }

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeOptions } from "../lib/api";
-import { outputDetails, XLSX_CONTENT_TYPE, DOCX_CONTENT_TYPE } from "../lib/config";
+import { normalizeOptions } from "../lib/api.js";
+import { outputDetails, XLSX_CONTENT_TYPE, DOCX_CONTENT_TYPE } from "../lib/config.js";
 
 test("normalizeOptions - legacy jobs default to docx", () => {
   const options = normalizeOptions({});

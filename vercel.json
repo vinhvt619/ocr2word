@@ -14,7 +14,7 @@
         }
       ],
       "functions": {
-        "pages/api/queue/convert.ts": {
+        "pages/api/queue/convert.js": {
           "maxDuration": "max",
           "experimentalTriggers": [
             {

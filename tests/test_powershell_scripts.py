@@ -35,10 +35,11 @@ def test_vercel_local_parity_configuration_stays_in_sync() -> None:
     project_root = Path(__file__).resolve().parents[1]
     config = json.loads((project_root / "vercel.json").read_text(encoding="utf-8"))
     package = json.loads((project_root / "frontend" / "package.json").read_text(encoding="utf-8"))
-    trigger = config["services"]["web"]["functions"]["pages/api/queue/convert.ts"][
+    trigger = config["services"]["web"]["functions"]["pages/api/queue/convert.js"][
         "experimentalTriggers"
     ][0]
 
+    assert (project_root / "frontend" / "pages/api/queue/convert.js").is_file()
     assert package["engines"]["node"] == "24.x"
     assert trigger["type"] == "queue/v2beta"
     assert trigger["topic"] == "ocr2word-convert"

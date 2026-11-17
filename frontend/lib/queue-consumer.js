@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import { registerDevConsumer } from "@vercel/queue";
 
-import { errorMessage, normalizeOptions, validJobId } from "./api";
-import { createWorkerReadUrl, createWorkerWriteUrl, deleteBlobs } from "./blob";
+import { errorMessage, normalizeOptions, validJobId } from "./api.js";
+import { createWorkerReadUrl, createWorkerWriteUrl, deleteBlobs } from "./blob.js";
 import {
   DOCX_CONTENT_TYPE,
   MAX_TOTAL_BYTES,
@@ -12,8 +12,8 @@ import {
   OCR_CHUNK_TRIGGER_PAGES,
   QUEUE_TOPIC,
   internalSecret,
-} from "./config";
-import { conversionQueue } from "./queue-client";
+} from "./config.js";
+import { conversionQueue } from "./queue-client.js";
 import {
   acquireJobLock,
   addCleanupPathnames,
@@ -23,31 +23,47 @@ import {
   releaseJobLock,
   saveChunk,
   updateJob,
-} from "./store";
-import type { ConvertQueueMessage, JobRecord, PdfChunkRecord } from "./types";
+} from "./store.js";
+
+/** @typedef {import("./types.js").ConvertQueueMessage} ConvertQueueMessage */
+/** @typedef {import("./types.js").JobRecord} JobRecord */
+/** @typedef {import("./types.js").PdfChunkRecord} PdfChunkRecord */
+/** @typedef {{ start_page: number, end_page: number }} PageRange */
 
 class NonRetryableJobError extends Error {}
 class JobBusyError extends Error {}
 
 class WorkerResponseError extends Error {
-  readonly status: number;
-  constructor(message: string, status: number) {
+  /**
+   * @param {string} message
+   * @param {number} status
+   */
+  constructor(message, status) {
     super(message);
+    /** @type {number} */
     this.status = status;
   }
 }
 
-interface PageRange {
-  start_page: number;
-  end_page: number;
+/**
+ * @param {unknown} item
+ * @returns {item is Record<string, unknown>}
+ */
+function isRecordObject(item) {
+  return Boolean(item && typeof item === "object");
 }
 
-function workerErrorDetail(payload: Record<string, unknown>, status: number): string {
+/**
+ * @param {Record<string, unknown>} payload
+ * @param {number} status
+ * @returns {string}
+ */
+function workerErrorDetail(payload, status) {
   if (typeof payload.detail === "string") return payload.detail;
   if (Array.isArray(payload.detail)) {
     const messages = payload.detail.flatMap((item) => {
       if (!item || typeof item !== "object") return [];
-      const issue = item as Record<string, unknown>;
+      const issue = /** @type {Record<string, unknown>} */ (item);
       const location = Array.isArray(issue.loc) ? issue.loc.map(String).join(".") : "payload";
       const message = typeof issue.msg === "string" ? issue.msg : "Dữ liệu không hợp lệ";
       return [`${location}: ${message}`];
@@ -57,13 +73,21 @@ function workerErrorDetail(payload: Record<string, unknown>, status: number): st
   return `Container OCR trả về HTTP ${status}.`;
 }
 
-function workerBaseUrl(): string {
+/**
+ * @returns {string}
+ */
+function workerBaseUrl() {
   const workerBase = process.env.OCR2WORD_WORKER_URL?.trim();
   if (!workerBase) throw new Error("Thiếu service binding OCR2WORD_WORKER_URL.");
   return workerBase.replace(/\/$/, "");
 }
 
-async function callWorker(pathname: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+/**
+ * @param {string} pathname
+ * @param {Record<string, unknown>} body
+ * @returns {Promise<Record<string, unknown>>}
+ */
+async function callWorker(pathname, body) {
   const secret = internalSecret();
   const response = await fetch(new URL(pathname, `${workerBaseUrl()}/`), {
     method: "POST",
@@ -74,25 +98,40 @@ async function callWorker(pathname: string, body: Record<string, unknown>): Prom
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(270_000),
   });
-  const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+  const payload = /** @type {Record<string, unknown>} */ (
+    await response.json().catch(() => ({}))
+  );
   if (!response.ok) {
     throw new WorkerResponseError(workerErrorDetail(payload, response.status), response.status);
   }
   return payload;
 }
 
-function finiteInteger(value: unknown, fallback = 0): number {
+/**
+ * @param {unknown} value
+ * @param {number} [fallback=0]
+ * @returns {number}
+ */
+function finiteInteger(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
-function reportItems(payload: Record<string, unknown>): Array<Record<string, unknown>> {
+/**
+ * @param {Record<string, unknown>} payload
+ * @returns {Array<Record<string, unknown>>}
+ */
+function reportItems(payload) {
   return Array.isArray(payload.report)
-    ? payload.report.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+    ? payload.report.filter(isRecordObject)
     : [];
 }
 
-function sourceFile(job: JobRecord, downloadUrl: string) {
+/**
+ * @param {JobRecord} job
+ * @param {string} downloadUrl
+ */
+function sourceFile(job, downloadUrl) {
   const source = job.files[0];
   return {
     name: source.name,
@@ -102,26 +141,44 @@ function sourceFile(job: JobRecord, downloadUrl: string) {
   };
 }
 
-export function stageLockScope(message: ConvertQueueMessage, job?: JobRecord): string {
+/**
+ * @param {ConvertQueueMessage} message
+ * @param {JobRecord} [job]
+ * @returns {string}
+ */
+export function stageLockScope(message, job) {
   if (job?.options?.output_format === "xlsx") {
     return "job";
   }
   return message.action === "chunk" ? `chunk-${message.chunk_index ?? "invalid"}` : (message.action || "convert");
 }
 
-function chunkPathname(jobId: string, index: number): string {
+/**
+ * @param {string} jobId
+ * @param {number} index
+ * @returns {string}
+ */
+function chunkPathname(jobId, index) {
   return `ocr2word/${jobId}/intermediate/chunk-${String(index + 1).padStart(4, "0")}.docx`;
 }
 
+/**
+ * @param {number} pageCount
+ * @param {number[]} ocrPages
+ * @param {number} [maxScanPages]
+ * @param {number} [maxTotalPages]
+ * @returns {PageRange[]}
+ */
 export function planPdfChunks(
-  pageCount: number,
-  ocrPages: number[],
+  pageCount,
+  ocrPages,
   maxScanPages = OCR_CHUNK_TARGET_SCAN_PAGES,
   maxTotalPages = OCR_CHUNK_MAX_TOTAL_PAGES,
-): PageRange[] {
+) {
   if (!Number.isInteger(pageCount) || pageCount < 1) return [];
   const scans = new Set(ocrPages.filter((page) => Number.isInteger(page) && page >= 1 && page <= pageCount));
-  const chunks: PageRange[] = [];
+  /** @type {PageRange[]} */
+  const chunks = [];
   let startPage = 1;
   let scanCount = 0;
   for (let page = 1; page <= pageCount; page += 1) {
@@ -139,7 +196,12 @@ export function planPdfChunks(
   return chunks;
 }
 
-async function enqueue(message: ConvertQueueMessage, idempotencyKey: string): Promise<void> {
+/**
+ * @param {ConvertQueueMessage} message
+ * @param {string} idempotencyKey
+ * @returns {Promise<void>}
+ */
+async function enqueue(message, idempotencyKey) {
   if (process.env.NODE_ENV === "development") ensureLocalConversionConsumer();
   await conversionQueue.send(QUEUE_TOPIC, message, {
     idempotencyKey,
@@ -147,7 +209,11 @@ async function enqueue(message: ConvertQueueMessage, idempotencyKey: string): Pr
   });
 }
 
-async function cleanupFinishedJob(job: JobRecord): Promise<void> {
+/**
+ * @param {JobRecord} job
+ * @returns {Promise<void>}
+ */
+async function cleanupFinishedJob(job) {
   const pathnames = [...job.files.map((file) => file.pathname)];
   if (job.chunk_total) {
     const chunks = await getChunks(job.job_id, job.chunk_total);
@@ -160,11 +226,17 @@ async function cleanupFinishedJob(job: JobRecord): Promise<void> {
   }
 }
 
+/**
+ * @param {JobRecord} job
+ * @param {Array<Record<string, unknown>>} report
+ * @param {string} [message]
+ * @returns {Promise<void>}
+ */
 async function completeJob(
-  job: JobRecord,
-  report: Array<Record<string, unknown>>,
+  job,
+  report,
   message = "Đã chuyển đổi xong. Kết quả sẵn sàng để tải xuống.",
-): Promise<void> {
+) {
   await updateJob(job.job_id, {
     status: "complete",
     percent: 100,
@@ -177,7 +249,11 @@ async function completeJob(
   await cleanupFinishedJob({ ...job, report });
 }
 
-async function processAnalyze(job: JobRecord): Promise<void> {
+/**
+ * @param {JobRecord} job
+ * @returns {Promise<void>}
+ */
+async function processAnalyze(job) {
   if (job.options.output_format === "xlsx") {
     await processLegacy(job);
     return;
@@ -229,7 +305,8 @@ async function processAnalyze(job: JobRecord): Promise<void> {
   }
 
   const ranges = planPdfChunks(pageCount, ocrPages);
-  const chunks: PdfChunkRecord[] = ranges.map((range, index) => ({
+  /** @type {PdfChunkRecord[]} */
+  const chunks = ranges.map((range, index) => ({
     job_id: job.job_id,
     index,
     start_page: range.start_page,
@@ -258,7 +335,11 @@ async function processAnalyze(job: JobRecord): Promise<void> {
   )));
 }
 
-async function processLegacy(job: JobRecord): Promise<void> {
+/**
+ * @param {JobRecord} job
+ * @returns {Promise<void>}
+ */
+async function processLegacy(job) {
   await updateJob(job.job_id, {
     pipeline: "legacy",
     status: "processing",
@@ -288,7 +369,11 @@ async function processLegacy(job: JobRecord): Promise<void> {
   await completeJob(job, report);
 }
 
-async function maybeQueueMerge(job: JobRecord): Promise<void> {
+/**
+ * @param {JobRecord} job
+ * @returns {Promise<void>}
+ */
+async function maybeQueueMerge(job) {
   const total = job.chunk_total ?? 0;
   if (!total) return;
   const chunks = await getChunks(job.job_id, total);
@@ -297,7 +382,12 @@ async function maybeQueueMerge(job: JobRecord): Promise<void> {
   }
 }
 
-async function processChunk(job: JobRecord, chunkIndex: number): Promise<void> {
+/**
+ * @param {JobRecord} job
+ * @param {number} chunkIndex
+ * @returns {Promise<void>}
+ */
+async function processChunk(job, chunkIndex) {
   if (job.pipeline !== "chunked_pdf" || !job.chunk_total) {
     throw new NonRetryableJobError("Job không có kế hoạch chia PDF hợp lệ.");
   }
@@ -348,7 +438,12 @@ async function processChunk(job: JobRecord, chunkIndex: number): Promise<void> {
   if (completed === job.chunk_total) await maybeQueueMerge(job);
 }
 
-function combinedChunkReport(job: JobRecord, chunks: PdfChunkRecord[]): Array<Record<string, unknown>> {
+/**
+ * @param {JobRecord} job
+ * @param {PdfChunkRecord[]} chunks
+ * @returns {Array<Record<string, unknown>>}
+ */
+function combinedChunkReport(job, chunks) {
   const warnings = chunks.flatMap((chunk) => chunk.report.flatMap((item) => (
     Array.isArray(item.warnings) ? item.warnings.map(String) : []
   )));
@@ -369,7 +464,11 @@ function combinedChunkReport(job: JobRecord, chunks: PdfChunkRecord[]): Array<Re
   }];
 }
 
-async function processMerge(job: JobRecord): Promise<void> {
+/**
+ * @param {JobRecord} job
+ * @returns {Promise<void>}
+ */
+async function processMerge(job) {
   if (job.pipeline !== "chunked_pdf" || !job.chunk_total) {
     throw new NonRetryableJobError("Job không có các phần PDF để ghép.");
   }
@@ -404,7 +503,12 @@ async function processMerge(job: JobRecord): Promise<void> {
   await completeJob(job, report);
 }
 
-export async function runStage(message: ConvertQueueMessage, job: JobRecord): Promise<void> {
+/**
+ * @param {ConvertQueueMessage} message
+ * @param {JobRecord} job
+ * @returns {Promise<void>}
+ */
+export async function runStage(message, job) {
   if (job.options.output_format === "xlsx") {
     if (message.action === "chunk" || message.action === "merge") {
       throw new NonRetryableJobError(`Tác vụ '${message.action}' không được hỗ trợ cho định dạng xuất Excel (.xlsx).`);
@@ -433,7 +537,12 @@ export async function runStage(message: ConvertQueueMessage, job: JobRecord): Pr
   }
 }
 
-export async function processConversionJob(message: ConvertQueueMessage, deliveryCount: number): Promise<void> {
+/**
+ * @param {ConvertQueueMessage} message
+ * @param {number} deliveryCount
+ * @returns {Promise<void>}
+ */
+export async function processConversionJob(message, deliveryCount) {
   if (!message || !validJobId(message.job_id)) throw new NonRetryableJobError("Thông điệp hàng đợi không hợp lệ.");
   const job = await getJob(message.job_id);
   if (!job || job.status === "complete") return;
@@ -452,9 +561,12 @@ export async function processConversionJob(message: ConvertQueueMessage, deliver
     const detail = errorMessage(error, "Container OCR tạm thời không phản hồi.");
     const nonRetryableWorkerError = error instanceof WorkerResponseError
       && error.status >= 400 && error.status < 500;
+    const chunkIndex = typeof message.chunk_index === "number" && Number.isInteger(message.chunk_index)
+      ? message.chunk_index
+      : null;
     if (nonRetryableWorkerError || deliveryCount >= 3) {
-      if (message.action === "chunk" && Number.isInteger(message.chunk_index)) {
-        const chunk = await getChunk(job.job_id, message.chunk_index!);
+      if (message.action === "chunk" && chunkIndex !== null) {
+        const chunk = await getChunk(job.job_id, chunkIndex);
         if (chunk) await saveChunk({ ...chunk, status: "error", error: detail });
       }
       await updateJob(job.job_id, {
@@ -464,8 +576,8 @@ export async function processConversionJob(message: ConvertQueueMessage, deliver
       });
       throw new NonRetryableJobError(detail);
     }
-    if (message.action === "chunk" && Number.isInteger(message.chunk_index)) {
-      const chunk = await getChunk(job.job_id, message.chunk_index!);
+    if (message.action === "chunk" && chunkIndex !== null) {
+      const chunk = await getChunk(job.job_id, chunkIndex);
       if (chunk) await saveChunk({ ...chunk, status: "queued", error: null });
     }
     await updateJob(job.job_id, {
@@ -481,10 +593,15 @@ export async function processConversionJob(message: ConvertQueueMessage, deliver
   }
 }
 
-function retryDirective(error: unknown, metadata: { deliveryCount: number }) {
-  if (error instanceof NonRetryableJobError) return { acknowledge: true } as const;
-  if (error instanceof JobBusyError) return { afterSeconds: 20 } as const;
-  return { afterSeconds: Math.min(120, 15 * 2 ** Math.max(0, metadata.deliveryCount - 1)) } as const;
+/**
+ * @param {unknown} error
+ * @param {{ deliveryCount: number }} metadata
+ * @returns {{ acknowledge: true } | { afterSeconds: number }}
+ */
+function retryDirective(error, metadata) {
+  if (error instanceof NonRetryableJobError) return { acknowledge: true };
+  if (error instanceof JobBusyError) return { afterSeconds: 20 };
+  return { afterSeconds: Math.min(120, 15 * 2 ** Math.max(0, metadata.deliveryCount - 1)) };
 }
 
 export const conversionCallbackOptions = {
@@ -494,13 +611,19 @@ export const conversionCallbackOptions = {
 
 let localConsumerRegistered = false;
 
-export function ensureLocalConversionConsumer(): void {
+/**
+ * @returns {void}
+ */
+export function ensureLocalConversionConsumer() {
   if (process.env.NODE_ENV !== "development" || localConsumerRegistered) return;
   registerDevConsumer({
     topic: QUEUE_TOPIC,
     client: conversionQueue,
     consumerGroup: "ocr2word-local-convert",
-    handler: async (message, metadata) => processConversionJob(message as ConvertQueueMessage, metadata.deliveryCount),
+    handler: async (message, metadata) => processConversionJob(
+      /** @type {ConvertQueueMessage} */ (message),
+      metadata.deliveryCount,
+    ),
     ...conversionCallbackOptions,
   });
   localConsumerRegistered = true;

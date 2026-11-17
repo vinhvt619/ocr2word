@@ -1,10 +1,15 @@
-import type { NextApiRequest, NextApiResponse } from "next";
+import { internalRequestAuthorized, requestBody, validJobId } from "../../../lib/api.js";
+import { getJob, updateJob } from "../../../lib/store.js";
 
-import { internalRequestAuthorized, requestBody, validJobId } from "../../../lib/api";
-import { getJob, updateJob } from "../../../lib/store";
-import type { JobStatus } from "../../../lib/types";
+/** @typedef {import("next").NextApiRequest} NextApiRequest */
+/** @typedef {import("next").NextApiResponse} NextApiResponse */
+/** @typedef {import("../../../lib/types.js").JobStatus} JobStatus */
 
-export default async function handler(request: NextApiRequest, response: NextApiResponse) {
+/**
+ * @param {NextApiRequest} request
+ * @param {NextApiResponse} response
+ */
+export default async function handler(request, response) {
   if (request.method !== "POST") {
     response.setHeader("Allow", "POST");
     return response.status(405).json({ detail: "Phương thức không được hỗ trợ." });
@@ -20,8 +25,11 @@ export default async function handler(request: NextApiRequest, response: NextApi
   const percent = Number.isFinite(requestedPercent)
     ? Math.max(job.percent, Math.min(99, Math.max(0, requestedPercent)))
     : job.percent;
-  const allowedStatuses = new Set<JobStatus>(["processing", "packaging"]);
-  const requestedStatus = typeof body.status === "string" ? body.status as JobStatus : "processing";
+  /** @type {Set<JobStatus>} */
+  const allowedStatuses = new Set(["processing", "packaging"]);
+  const requestedStatus = typeof body.status === "string"
+    ? /** @type {JobStatus} */ (body.status)
+    : "processing";
   const status = allowedStatuses.has(requestedStatus) ? requestedStatus : "processing";
   const completedFiles = Math.max(
     job.completed_files,

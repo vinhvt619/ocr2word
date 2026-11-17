@@ -1,9 +1,15 @@
 import { Redis } from "@upstash/redis";
 
-import { CLEANUP_SET_KEY, JOB_TTL_SECONDS } from "./config";
-import type { CleanupRecord, JobRecord, PdfChunkRecord } from "./types";
+import { CLEANUP_SET_KEY, JOB_TTL_SECONDS } from "./config.js";
 
-function redisClient(): Redis {
+/** @typedef {import("./types.js").CleanupRecord} CleanupRecord */
+/** @typedef {import("./types.js").JobRecord} JobRecord */
+/** @typedef {import("./types.js").PdfChunkRecord} PdfChunkRecord */
+
+/**
+ * @returns {Redis}
+ */
+function redisClient() {
   const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
   if (!url || !token) {
@@ -12,35 +18,63 @@ function redisClient(): Redis {
   return new Redis({ url, token });
 }
 
-function jobKey(jobId: string): string {
+/**
+ * @param {string} jobId
+ * @returns {string}
+ */
+function jobKey(jobId) {
   return `ocr2word:job:${jobId}`;
 }
 
-function cleanupKey(jobId: string): string {
+/**
+ * @param {string} jobId
+ * @returns {string}
+ */
+function cleanupKey(jobId) {
   return `ocr2word:cleanup:${jobId}`;
 }
 
-function lockKey(jobId: string, scope: string): string {
+/**
+ * @param {string} jobId
+ * @param {string} scope
+ * @returns {string}
+ */
+function lockKey(jobId, scope) {
   return `ocr2word:lock:${jobId}:${scope.replace(/[^A-Za-z0-9_-]/g, "-")}`;
 }
 
-function chunkKey(jobId: string, index: number): string {
+/**
+ * @param {string} jobId
+ * @param {number} index
+ * @returns {string}
+ */
+function chunkKey(jobId, index) {
   return `ocr2word:chunk:${jobId}:${index}`;
 }
 
-export async function getJob(jobId: string): Promise<JobRecord | null> {
-  return redisClient().get<JobRecord>(jobKey(jobId));
+/**
+ * @param {string} jobId
+ * @returns {Promise<JobRecord | null>}
+ */
+export async function getJob(jobId) {
+  return /** @type {Promise<JobRecord | null>} */ (redisClient().get(jobKey(jobId)));
 }
 
-export async function saveJob(job: JobRecord): Promise<void> {
+/**
+ * @param {JobRecord} job
+ * @returns {Promise<void>}
+ */
+export async function saveJob(job) {
   job.updated_at = new Date().toISOString();
   await redisClient().set(jobKey(job.job_id), job, { ex: JOB_TTL_SECONDS });
 }
 
-export async function updateJob(
-  jobId: string,
-  patch: Partial<JobRecord>,
-): Promise<JobRecord | null> {
+/**
+ * @param {string} jobId
+ * @param {Partial<JobRecord>} patch
+ * @returns {Promise<JobRecord | null>}
+ */
+export async function updateJob(jobId, patch) {
   const updatedAt = new Date().toISOString();
   const applied = Number(await redisClient().eval(
     `
@@ -65,7 +99,12 @@ export async function updateJob(
   return applied === 1 ? getJob(jobId) : null;
 }
 
-export async function registerCleanup(jobId: string, record: CleanupRecord): Promise<void> {
+/**
+ * @param {string} jobId
+ * @param {CleanupRecord} record
+ * @returns {Promise<void>}
+ */
+export async function registerCleanup(jobId, record) {
   const redis = redisClient();
   await Promise.all([
     redis.set(cleanupKey(jobId), record, { ex: JOB_TTL_SECONDS + 24 * 60 * 60 }),
@@ -73,7 +112,12 @@ export async function registerCleanup(jobId: string, record: CleanupRecord): Pro
   ]);
 }
 
-export async function addCleanupPathnames(jobId: string, pathnames: string[]): Promise<void> {
+/**
+ * @param {string} jobId
+ * @param {string[]} pathnames
+ * @returns {Promise<void>}
+ */
+export async function addCleanupPathnames(jobId, pathnames) {
   if (!pathnames.length) return;
   const record = await getCleanup(jobId);
   if (!record) return;
@@ -81,30 +125,63 @@ export async function addCleanupPathnames(jobId: string, pathnames: string[]): P
   await redisClient().set(cleanupKey(jobId), record, { ex: JOB_TTL_SECONDS + 24 * 60 * 60 });
 }
 
-export async function saveChunk(chunk: PdfChunkRecord): Promise<void> {
+/**
+ * @param {PdfChunkRecord} chunk
+ * @returns {Promise<void>}
+ */
+export async function saveChunk(chunk) {
   await redisClient().set(chunkKey(chunk.job_id, chunk.index), chunk, { ex: JOB_TTL_SECONDS });
 }
 
-export async function getChunk(jobId: string, index: number): Promise<PdfChunkRecord | null> {
-  return redisClient().get<PdfChunkRecord>(chunkKey(jobId, index));
+/**
+ * @param {string} jobId
+ * @param {number} index
+ * @returns {Promise<PdfChunkRecord | null>}
+ */
+export async function getChunk(jobId, index) {
+  return /** @type {Promise<PdfChunkRecord | null>} */ (redisClient().get(chunkKey(jobId, index)));
 }
 
-export async function getChunks(jobId: string, total: number): Promise<PdfChunkRecord[]> {
+/**
+ * @param {PdfChunkRecord | null} chunk
+ * @returns {chunk is PdfChunkRecord}
+ */
+function isPresentChunk(chunk) {
+  return chunk !== null;
+}
+
+/**
+ * @param {string} jobId
+ * @param {number} total
+ * @returns {Promise<PdfChunkRecord[]>}
+ */
+export async function getChunks(jobId, total) {
   const chunks = await Promise.all(
     Array.from({ length: total }, (_, index) => getChunk(jobId, index)),
   );
-  return chunks.filter((chunk): chunk is PdfChunkRecord => chunk !== null);
+  return chunks.filter(isPresentChunk);
 }
 
-export async function listCleanupIds(): Promise<string[]> {
+/**
+ * @returns {Promise<string[]>}
+ */
+export async function listCleanupIds() {
   return redisClient().smembers(CLEANUP_SET_KEY);
 }
 
-export async function getCleanup(jobId: string): Promise<CleanupRecord | null> {
-  return redisClient().get<CleanupRecord>(cleanupKey(jobId));
+/**
+ * @param {string} jobId
+ * @returns {Promise<CleanupRecord | null>}
+ */
+export async function getCleanup(jobId) {
+  return /** @type {Promise<CleanupRecord | null>} */ (redisClient().get(cleanupKey(jobId)));
 }
 
-export async function removeCleanup(jobId: string): Promise<void> {
+/**
+ * @param {string} jobId
+ * @returns {Promise<void>}
+ */
+export async function removeCleanup(jobId) {
   const redis = redisClient();
   const job = await getJob(jobId);
   const chunkKeys = Array.from(
@@ -119,12 +196,24 @@ export async function removeCleanup(jobId: string): Promise<void> {
   ]);
 }
 
-export async function acquireJobLock(jobId: string, token: string, scope = "job"): Promise<boolean> {
+/**
+ * @param {string} jobId
+ * @param {string} token
+ * @param {string} [scope="job"]
+ * @returns {Promise<boolean>}
+ */
+export async function acquireJobLock(jobId, token, scope = "job") {
   const result = await redisClient().set(lockKey(jobId, scope), token, { nx: true, ex: 31 * 60 });
   return result === "OK";
 }
 
-export async function releaseJobLock(jobId: string, token: string, scope = "job"): Promise<void> {
+/**
+ * @param {string} jobId
+ * @param {string} token
+ * @param {string} [scope="job"]
+ * @returns {Promise<void>}
+ */
+export async function releaseJobLock(jobId, token, scope = "job") {
   await redisClient().eval(
     "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
     [lockKey(jobId, scope)],

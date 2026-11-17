@@ -1,10 +1,15 @@
-import type { NextApiRequest, NextApiResponse } from "next";
+import { cronRequestAuthorized } from "../../../lib/api.js";
+import { deleteBlobs } from "../../../lib/blob.js";
+import { getCleanup, listCleanupIds, removeCleanup } from "../../../lib/store.js";
 
-import { cronRequestAuthorized } from "../../../lib/api";
-import { deleteBlobs } from "../../../lib/blob";
-import { getCleanup, listCleanupIds, removeCleanup } from "../../../lib/store";
+/** @typedef {import("next").NextApiRequest} NextApiRequest */
+/** @typedef {import("next").NextApiResponse} NextApiResponse */
 
-export default async function handler(request: NextApiRequest, response: NextApiResponse) {
+/**
+ * @param {NextApiRequest} request
+ * @param {NextApiResponse} response
+ */
+export default async function handler(request, response) {
   if (request.method !== "GET") {
     response.setHeader("Allow", "GET");
     return response.status(405).json({ detail: "Phương thức không được hỗ trợ." });

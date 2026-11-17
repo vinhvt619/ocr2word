@@ -1,9 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-import type { NextApiRequest, NextApiResponse } from "next";
-
-import { errorMessage, normalizeOptions, requestBody } from "../../../lib/api";
-import { createBrowserUploadUrl } from "../../../lib/blob";
+import { errorMessage, normalizeOptions, requestBody } from "../../../lib/api.js";
+import { createBrowserUploadUrl } from "../../../lib/blob.js";
 import {
   ALLOWED_EXTENSIONS,
   EXCEL_EXTENSIONS,
@@ -14,21 +12,25 @@ import {
   extensionOf,
   mimeTypeFor,
   outputDetails,
-} from "../../../lib/config";
-import { registerCleanup, saveJob } from "../../../lib/store";
-import type { JobFile, JobRecord } from "../../../lib/types";
+} from "../../../lib/config.js";
+import { registerCleanup, saveJob } from "../../../lib/store.js";
 
-interface IncomingFile {
-  name: string;
-  size: number;
-}
+/** @typedef {import("next").NextApiRequest} NextApiRequest */
+/** @typedef {import("next").NextApiResponse} NextApiResponse */
+/** @typedef {import("../../../lib/types.js").JobFile} JobFile */
+/** @typedef {import("../../../lib/types.js").JobRecord} JobRecord */
+/** @typedef {{ name: string, size: number }} IncomingFile */
 
-function validateFiles(value: unknown): IncomingFile[] {
+/**
+ * @param {unknown} value
+ * @returns {IncomingFile[]}
+ */
+function validateFiles(value) {
   if (!Array.isArray(value) || value.length === 0) throw new Error("Hãy chọn ít nhất một file.");
   if (value.length > MAX_FILES) throw new Error(`Mỗi lượt chỉ nhận tối đa ${MAX_FILES} file.`);
   const files = value.map((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("Danh sách file không hợp lệ.");
-    const candidate = item as Record<string, unknown>;
+    const candidate = /** @type {Record<string, unknown>} */ (item);
     const name = typeof candidate.name === "string" ? candidate.name.normalize("NFC").trim() : "";
     const size = Number(candidate.size);
     const extension = extensionOf(name);
@@ -44,7 +46,11 @@ function validateFiles(value: unknown): IncomingFile[] {
   return files;
 }
 
-export default async function handler(request: NextApiRequest, response: NextApiResponse) {
+/**
+ * @param {NextApiRequest} request
+ * @param {NextApiResponse} response
+ */
+export default async function handler(request, response) {
   if (request.method !== "POST") {
     response.setHeader("Allow", "POST");
     return response.status(405).json({ detail: "Phương thức không được hỗ trợ." });
@@ -61,7 +67,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
       }
     }
     const jobId = randomUUID().replaceAll("-", "");
-    const files: JobFile[] = incomingFiles.map((file, index) => {
+    /** @type {JobFile[]} */
+    const files = incomingFiles.map((file, index) => {
       const extension = extensionOf(file.name);
       return {
         name: file.name,
@@ -79,7 +86,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
     const now = new Date();
     const expiresAt = new Date(now.getTime() + RESULT_TTL_MS);
     const outputPathname = `ocr2word/${jobId}/output/result.${output.extension}`;
-    const job: JobRecord = {
+    /** @type {JobRecord} */
+    const job = {
       job_id: jobId,
       status: "uploading",
       percent: 0,

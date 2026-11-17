@@ -1,12 +1,17 @@
-import type { NextApiRequest, NextApiResponse } from "next";
+import { errorMessage, validJobId } from "../../../../lib/api.js";
+import { extensionOf, PDF_EXTENSIONS, QUEUE_TOPIC } from "../../../../lib/config.js";
+import { conversionQueue } from "../../../../lib/queue-client.js";
+import { getJob, updateJob } from "../../../../lib/store.js";
 
-import { errorMessage, validJobId } from "../../../../lib/api";
-import { extensionOf, PDF_EXTENSIONS, QUEUE_TOPIC } from "../../../../lib/config";
-import { conversionQueue } from "../../../../lib/queue-client";
-import { getJob, updateJob } from "../../../../lib/store";
-import type { ConvertQueueMessage } from "../../../../lib/types";
+/** @typedef {import("next").NextApiRequest} NextApiRequest */
+/** @typedef {import("next").NextApiResponse} NextApiResponse */
+/** @typedef {import("../../../../lib/types.js").ConvertQueueMessage} ConvertQueueMessage */
 
-export default async function handler(request: NextApiRequest, response: NextApiResponse) {
+/**
+ * @param {NextApiRequest} request
+ * @param {NextApiResponse} response
+ */
+export default async function handler(request, response) {
   if (request.method !== "POST") {
     response.setHeader("Allow", "POST");
     return response.status(405).json({ detail: "Phương thức không được hỗ trợ." });
@@ -21,7 +26,8 @@ export default async function handler(request: NextApiRequest, response: NextApi
       && PDF_EXTENSIONS.has(extensionOf(job.files[0].name))
       && job.options.ocr_mode !== "text"
       && job.options.output_format !== "xlsx";
-    const action: ConvertQueueMessage["action"] = shouldAnalyze ? "analyze" : "convert";
+    /** @type {ConvertQueueMessage["action"]} */
+    const action = shouldAnalyze ? "analyze" : "convert";
     await updateJob(jobId, {
       status: "queued",
       percent: 21,
@@ -31,9 +37,10 @@ export default async function handler(request: NextApiRequest, response: NextApi
       error: null,
       pipeline: shouldAnalyze ? "analyzing_pdf" : "legacy",
     });
-    const message: ConvertQueueMessage = { job_id: jobId, action };
+    /** @type {ConvertQueueMessage} */
+    const message = { job_id: jobId, action };
     if (process.env.NODE_ENV === "development") {
-      const { ensureLocalConversionConsumer } = await import("../../../../lib/queue-consumer");
+      const { ensureLocalConversionConsumer } = await import("../../../../lib/queue-consumer.js");
       ensureLocalConversionConsumer();
     }
     await conversionQueue.send(QUEUE_TOPIC, message, {
